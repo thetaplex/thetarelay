@@ -50,8 +50,10 @@ class SpeculativeConfig:
     local_model: str = "qwen2.5-coder:7b"
     local_api_key: str = "local"
     local_timeout_seconds: float = 8.0
-    local_max_tokens: int = 1024
+    local_max_tokens: int = 384
     local_temperature: float = 0.0
+    local_disable_thinking: bool = True
+    local_concise_draft_instructions: bool = True
 
     # Context window trimming for the local model so prefill stays sub-second
     local_max_context_chars: int = 24000
@@ -74,8 +76,10 @@ class SpeculativeConfig:
     # Token marker used for fast verification short-circuiting
     accept_token: str = "<ACCEPT/>"  # noqa: S105
 
-    # Estimated output token price ($ per 1M tokens) for savings attribution
+    # Estimated token prices ($ per 1M tokens) and throughput for savings/latency attribution
+    estimated_input_usd_per_million: float = 3.0
     estimated_output_usd_per_million: float = 15.0
+    estimated_frontier_output_tps: float = 65.0
 
     # Excluded model substrings (e.g., haiku or small fast models that don't need drafting)
     skip_models: tuple[str, ...] = field(default_factory=lambda: ("haiku", "mini", "nano", "flash"))
@@ -99,8 +103,10 @@ class SpeculativeConfig:
             local_model=os.environ.get("THETACODE_LOCAL_MODEL", "qwen2.5-coder:7b"),
             local_api_key=os.environ.get("THETACODE_LOCAL_API_KEY", "local"),
             local_timeout_seconds=_env_float("THETACODE_LOCAL_TIMEOUT", 8.0),
-            local_max_tokens=_env_int("THETACODE_LOCAL_MAX_TOKENS", 1024),
+            local_max_tokens=_env_int("THETACODE_LOCAL_MAX_TOKENS", 384),
             local_temperature=_env_float("THETACODE_LOCAL_TEMPERATURE", 0.0),
+            local_disable_thinking=_env_bool("THETACODE_LOCAL_DISABLE_THINKING", True),
+            local_concise_draft_instructions=_env_bool("THETACODE_LOCAL_CONCISE_DRAFT", True),
             local_max_context_chars=_env_int("THETACODE_LOCAL_MAX_CONTEXT_CHARS", 24000),
             local_recent_messages_limit=_env_int("THETACODE_LOCAL_RECENT_MESSAGES", 10),
             strategy=os.environ.get("THETACODE_STRATEGY", "auto").strip().lower(),
@@ -108,6 +114,8 @@ class SpeculativeConfig:
             min_prompt_chars_for_draft=_env_int("THETACODE_MIN_PROMPT_CHARS", 15),
             enable_headroom_middleware=_env_bool("THETACODE_HEADROOM_MIDDLEWARE", True),
             accept_token=os.environ.get("THETACODE_ACCEPT_TOKEN", "<ACCEPT/>").strip(),
+            estimated_input_usd_per_million=_env_float("THETACODE_INPUT_USD_PER_M", 3.0),
             estimated_output_usd_per_million=_env_float("THETACODE_OUTPUT_USD_PER_M", 15.0),
+            estimated_frontier_output_tps=_env_float("THETACODE_FRONTIER_OUTPUT_TPS", 65.0),
             skip_models=skip_models,
         )

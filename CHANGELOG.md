@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Documentation in `docs/`: tutorial, how-to guides, reference and explanation pages (Diátaxis, ASD-STE100).
+
 ## [0.1.0] - 2026-10-30
 
 First alpha release.
@@ -16,6 +20,8 @@ First alpha release.
 - Zero-latency SSE stream interceptor (`thetacode.streaming`) that synthesizes full text and `tool_use` SSE events on `<ACCEPT/>` or switches to passthrough on token divergence.
 - Native Headroom proxy extension (`headroom.proxy_extension` entry point `thetacode = "thetacode.headroom_ext:install"`) with `ThetaCodeTurnHook` and `ThetaCodeStreamingResponseMiddleware`.
 - Standalone FastAPI proxy (`thetacode proxy`) with automatic in-process `headroom.integrations.asgi.CompressionMiddleware` embedding and `/thetacode/stats` observability endpoint.
+- Deterministic A/B benchmark suite (`thetacode bench` / `just bench`) and live two-phase zero-swap evaluation runner (`thetacode eval` / `just eval`) including OpenAI HumanEval functional `pass@1` execution (`thetacode eval --benchmark humaneval`).
+- Thinking-mode suppression (`reasoning_effort: "none"`) and concise drafting directives for local reasoning models (e.g., `gemma4`, `qwen3`) to prevent thinking-token latency blowups during speculative drafting.
 
 [Unreleased]: https://github.com/thetaplex/thetacode/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/thetaplex/thetacode/releases/tag/v0.1.0

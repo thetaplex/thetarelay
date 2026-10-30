@@ -88,10 +88,12 @@ class ThetaCodeTurnHook:
 
         self.metrics.drafts_succeeded += 1
         self.metrics.local_draft_latency_ms_sum += draft.latency_ms
+        self.metrics.local_draft_latencies_ms.append(draft.latency_ms)
 
         updated_body, active_mode = inject_draft_into_body(body_view, provider, draft, self.config)
         if active_mode == "openai_prediction":
             self.metrics.openai_prediction_injected_count += 1
+            self.metrics.prefix_cache_preserved_count += 1
 
         ctx.messages = updated_body["messages"]
         # Store draft keyed by ctx.tags id AND in ctx.tags['_headroom_savings_attribution']
@@ -196,11 +198,10 @@ class ThetaCodeTurnHook:
         if provider == "anthropic":
             resp_text = extract_text_from_content(response.get("content", []))
             if response_accepted_draft(resp_text, self.config):
-                self.metrics.frontier_accepted_count += 1
-                saved_tok = max(0, draft.draft_tokens_est - 2)
+                saved_tok, _, _ = self.metrics.record_turn_outcome(
+                    draft=draft, config=self.config, accepted=True
+                )
                 saved_usd = (saved_tok / 1_000_000.0) * self.config.estimated_output_usd_per_million
-                self.metrics.estimated_output_tokens_saved += saved_tok
-                self.metrics.estimated_usd_saved += saved_usd
                 if hasattr(ctx, "record_savings"):
                     ctx.record_savings(
                         "thetacode_speculative",
@@ -210,20 +211,19 @@ class ThetaCodeTurnHook:
                     )
                 return build_anthropic_response_from_draft(response, draft)
             else:
-                self.metrics.frontier_modified_count += 1
+                self.metrics.record_turn_outcome(draft=draft, config=self.config, accepted=False)
         elif provider == "openai":
             choices = response.get("choices") or []
             if choices:
                 msg = (choices[0] or {}).get("message") or {}
                 resp_text = str(msg.get("content") or "")
                 if response_accepted_draft(resp_text, self.config):
-                    self.metrics.frontier_accepted_count += 1
-                    saved_tok = max(0, draft.draft_tokens_est - 2)
+                    saved_tok, _, _ = self.metrics.record_turn_outcome(
+                        draft=draft, config=self.config, accepted=True
+                    )
                     saved_usd = (
                         saved_tok / 1_000_000.0
                     ) * self.config.estimated_output_usd_per_million
-                    self.metrics.estimated_output_tokens_saved += saved_tok
-                    self.metrics.estimated_usd_saved += saved_usd
                     if hasattr(ctx, "record_savings"):
                         ctx.record_savings(
                             "thetacode_speculative",
@@ -233,7 +233,9 @@ class ThetaCodeTurnHook:
                         )
                     return build_openai_response_from_draft(response, draft)
                 else:
-                    self.metrics.frontier_modified_count += 1
+                    self.metrics.record_turn_outcome(
+                        draft=draft, config=self.config, accepted=False
+                    )
 
         return None
 
@@ -377,7 +379,7 @@ class ThetaCodeStreamingResponseMiddleware:
                         break
 
             if passthrough:
-                self.metrics.frontier_modified_count += 1
+                self.metrics.record_turn_outcome(draft=draft, config=self.config, accepted=False)
                 self.draft_store.pop(id(ledger), None)
                 for bmsg in buffered_messages:
                     await send(bmsg)
@@ -389,13 +391,12 @@ class ThetaCodeStreamingResponseMiddleware:
             if not more_body:
                 self.draft_store.pop(id(ledger), None)
                 if response_accepted_draft(accumulated_text, self.config):
-                    self.metrics.frontier_accepted_count += 1
-                    saved_tok = max(0, draft.draft_tokens_est - 2)
+                    saved_tok, _, _ = self.metrics.record_turn_outcome(
+                        draft=draft, config=self.config, accepted=True
+                    )
                     saved_usd = (
                         saved_tok / 1_000_000.0
                     ) * self.config.estimated_output_usd_per_million
-                    self.metrics.estimated_output_tokens_saved += saved_tok
-                    self.metrics.estimated_usd_saved += saved_usd
                     try:
                         from headroom.proxy.savings_attribution import record_scope_savings
 
@@ -431,7 +432,9 @@ class ThetaCodeStreamingResponseMiddleware:
                         }
                     )
                 else:
-                    self.metrics.frontier_modified_count += 1
+                    self.metrics.record_turn_outcome(
+                        draft=draft, config=self.config, accepted=False
+                    )
                     for bmsg in buffered_messages:
                         await send(bmsg)
                     await send({"type": "http.response.body", "body": b"", "more_body": False})

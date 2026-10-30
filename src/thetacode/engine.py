@@ -45,6 +45,26 @@ class DraftResult:
         return "\n".join(parts)
 
 
+def _percentile(values: list[float], pct: float) -> float:
+    """Compute a percentile (0..100) from a list of floats."""
+    if not values:
+        return 0.0
+    sorted_vals = sorted(values)
+    idx = (pct / 100.0) * (len(sorted_vals) - 1)
+    lower = int(idx)
+    upper = min(lower + 1, len(sorted_vals) - 1)
+    weight = idx - lower
+    return round(sorted_vals[lower] * (1.0 - weight) + sorted_vals[upper] * weight, 2)
+
+
+def estimate_injection_input_tokens(draft: DraftResult, config: SpeculativeConfig) -> int:
+    """Estimate input token overhead added when injecting a speculative draft into the prompt."""
+    if not draft.has_draft:
+        return 0
+    injection = build_verification_injection(draft, config)
+    return max(1, len(injection) // 4)
+
+
 @dataclass
 class SpeculativeMetrics:
     """Runtime statistics for speculative drafting and frontier verification."""
@@ -58,8 +78,61 @@ class SpeculativeMetrics:
     frontier_modified_count: int = 0
     openai_prediction_injected_count: int = 0
     estimated_output_tokens_saved: int = 0
+    estimated_input_tokens_added: int = 0
     estimated_usd_saved: float = 0.0
+    estimated_input_usd_cost: float = 0.0
     local_draft_latency_ms_sum: float = 0.0
+    frontier_latency_ms_sum: float = 0.0
+    estimated_net_latency_saved_ms_sum: float = 0.0
+    prefix_cache_preserved_count: int = 0
+    local_draft_latencies_ms: list[float] = field(default_factory=list)
+    frontier_latencies_ms: list[float] = field(default_factory=list)
+    end_to_end_latencies_ms: list[float] = field(default_factory=list)
+
+    def record_turn_outcome(
+        self,
+        *,
+        draft: DraftResult,
+        config: SpeculativeConfig,
+        accepted: bool,
+        active_mode: str = "accept_swap",
+        frontier_latency_ms: float = 0.0,
+    ) -> tuple[int, float, float]:
+        """Record token, cost, and latency effects of a speculative turn.
+
+        Returns (saved_output_tokens, net_usd_saved, est_net_latency_saved_ms).
+        """
+        if frontier_latency_ms > 0:
+            self.frontier_latency_ms_sum += frontier_latency_ms
+            self.frontier_latencies_ms.append(frontier_latency_ms)
+            self.end_to_end_latencies_ms.append(draft.latency_ms + frontier_latency_ms)
+
+        input_overhead_tok = (
+            0
+            if active_mode == "openai_prediction"
+            else estimate_injection_input_tokens(draft, config)
+        )
+        self.estimated_input_tokens_added += input_overhead_tok
+        input_cost_usd = (input_overhead_tok / 1_000_000.0) * config.estimated_input_usd_per_million
+        self.estimated_input_usd_cost += input_cost_usd
+        self.prefix_cache_preserved_count += 1
+
+        if accepted:
+            self.frontier_accepted_count += 1
+            saved_tok = max(0, draft.draft_tokens_est - 2)
+            gross_saved_usd = (saved_tok / 1_000_000.0) * config.estimated_output_usd_per_million
+            self.estimated_output_tokens_saved += saved_tok
+            self.estimated_usd_saved += gross_saved_usd
+            tps = max(1.0, config.estimated_frontier_output_tps)
+            avoided_decode_ms = (saved_tok / tps) * 1000.0
+            net_latency_saved_ms = avoided_decode_ms - draft.latency_ms
+            self.estimated_net_latency_saved_ms_sum += net_latency_saved_ms
+            return saved_tok, gross_saved_usd - input_cost_usd, net_latency_saved_ms
+
+        self.frontier_modified_count += 1
+        net_latency_saved_ms = -draft.latency_ms
+        self.estimated_net_latency_saved_ms_sum += net_latency_saved_ms
+        return 0, -input_cost_usd, net_latency_saved_ms
 
     def to_dict(self) -> dict[str, Any]:
         avg_draft_ms = (
@@ -67,11 +140,17 @@ class SpeculativeMetrics:
             if self.drafts_succeeded > 0
             else 0.0
         )
+        avg_frontier_ms = (
+            round(self.frontier_latency_ms_sum / len(self.frontier_latencies_ms), 2)
+            if self.frontier_latencies_ms
+            else 0.0
+        )
         accept_rate = (
             round((self.frontier_accepted_count / self.drafts_succeeded) * 100.0, 1)
             if self.drafts_succeeded > 0
             else 0.0
         )
+        net_usd = round(self.estimated_usd_saved - self.estimated_input_usd_cost, 4)
         return {
             "requests_total": self.requests_total,
             "drafts_attempted": self.drafts_attempted,
@@ -83,8 +162,20 @@ class SpeculativeMetrics:
             "acceptance_rate_percent": accept_rate,
             "openai_prediction_injected_count": self.openai_prediction_injected_count,
             "estimated_output_tokens_saved": self.estimated_output_tokens_saved,
+            "estimated_input_tokens_added": self.estimated_input_tokens_added,
+            "net_tokens_saved": self.estimated_output_tokens_saved
+            - self.estimated_input_tokens_added,
             "estimated_usd_saved": round(self.estimated_usd_saved, 4),
+            "estimated_input_usd_cost": round(self.estimated_input_usd_cost, 4),
+            "estimated_net_usd_saved": net_usd,
             "avg_local_draft_latency_ms": avg_draft_ms,
+            "p50_local_draft_latency_ms": _percentile(self.local_draft_latencies_ms, 50),
+            "p95_local_draft_latency_ms": _percentile(self.local_draft_latencies_ms, 95),
+            "avg_frontier_latency_ms": avg_frontier_ms,
+            "p50_end_to_end_latency_ms": _percentile(self.end_to_end_latencies_ms, 50),
+            "p95_end_to_end_latency_ms": _percentile(self.end_to_end_latencies_ms, 95),
+            "estimated_net_latency_saved_ms": round(self.estimated_net_latency_saved_ms_sum, 1),
+            "prefix_cache_preserved_count": self.prefix_cache_preserved_count,
         }
 
 
@@ -164,6 +255,23 @@ def convert_to_openai_draft_payload(
     openai_messages: list[dict[str, Any]] = []
 
     # 1. Include system instructions (trimmed)
+    has_tools = bool(body.get("tools"))
+    if config.local_concise_draft_instructions:
+        if has_tools:
+            concise_suffix = (
+                "\n\n[DRAFTING MODE: If a tool call is appropriate for the next step, "
+                "invoke the tool directly with exact arguments. Otherwise output a concise "
+                "code block or direct answer without unnecessary preamble.]"
+            )
+        else:
+            concise_suffix = (
+                "\n\n[DRAFTING MODE: Output ONLY a single ```python code block (or tool call) "
+                "containing the minimal implementation. Do NOT write explanations before or after "
+                "the code, do NOT write docstrings longer than 1 line, and do NOT include "
+                "`if __name__ == '__main__':` or example usage.]"
+            )
+    else:
+        concise_suffix = ""
     if provider == "anthropic":
         sys_raw = body.get("system")
         sys_text = extract_text_from_content(sys_raw) if sys_raw else ""
@@ -188,7 +296,10 @@ def convert_to_openai_draft_payload(
 
         text = extract_text_from_content(msg.get("content", ""))
         if not text and role == "assistant" and msg.get("tool_calls"):
-            text = json.dumps(msg.get("tool_calls"))
+            text = f"[Assistant Tool Calls]: {json.dumps(msg.get('tool_calls'))}"
+        elif role == "tool" and text:
+            tool_name = msg.get("name") or msg.get("tool_call_id") or "tool"
+            text = f"[Tool Result ({tool_name})]:\n{text}"
 
         if not text:
             continue
@@ -207,6 +318,8 @@ def convert_to_openai_draft_payload(
             break
 
     converted_tail.reverse()
+    if concise_suffix and converted_tail and converted_tail[-1]["role"] == "user":
+        converted_tail[-1]["content"] = converted_tail[-1]["content"] + concise_suffix
     openai_messages.extend(converted_tail)
 
     # 3. Convert tools if present so the local model can draft tool calls too
@@ -241,6 +354,8 @@ def convert_to_openai_draft_payload(
         "temperature": config.local_temperature,
         "stream": False,
     }
+    if config.local_disable_thinking:
+        payload["reasoning_effort"] = "none"
     if openai_tools:
         payload["tools"] = openai_tools[:16]  # Keep local tool schema prompt compact
 
@@ -391,19 +506,18 @@ def inject_draft_into_body(
     if not messages:
         return updated, "none"
 
-    # Find last user message (live zone tail) to preserve prefix caching on earlier messages
-    for idx in range(len(messages) - 1, -1, -1):
-        msg = messages[idx]
-        if not isinstance(msg, dict) or msg.get("role") != "user":
-            continue
-        content = msg.get("content")
+    # Append only to the final turn (live zone tail) to preserve 100% of historical prefix cache
+    last_msg = messages[-1]
+    if isinstance(last_msg, dict) and last_msg.get("role") == "user":
+        content = last_msg.get("content")
         if isinstance(content, str):
-            msg["content"] = content + injection_text
-            break
+            last_msg["content"] = content + injection_text
         elif isinstance(content, list):
-            # Append as a new text block at the end of the final user turn
             content.append({"type": "text", "text": injection_text})
-            break
+    else:
+        # When the final turn is a tool result (`role == "tool"` in OpenAI format),
+        # append a new user message at the tail so historical messages are never mutated.
+        messages.append({"role": "user", "content": injection_text.lstrip()})
 
     return updated, effective_mode
 
@@ -413,13 +527,19 @@ def response_accepted_draft(
     config: SpeculativeConfig,
 ) -> bool:
     """Check if the target model output indicates acceptance of the speculative draft."""
-    cleaned = resp_text.strip()
+    import re
+
+    # Strip any residual `<think>...</think>` or leading `</think>` tags from reasoning models
+    cleaned = re.sub(r"<think>.*?</think>", "", resp_text, flags=re.DOTALL)
+    cleaned = cleaned.replace("</think>", "").strip()
     if not cleaned:
         return False
     if cleaned == config.accept_token:
         return True
     # Also accept if the model echoed `<ACCEPT/>` with minor surrounding whitespace/punctuation
-    return cleaned.startswith(config.accept_token) and len(cleaned) <= len(config.accept_token) + 8
+    # or repeated `<ACCEPT/>` after a thinking tag
+    max_len = len(config.accept_token) * 2 + 8
+    return cleaned.startswith(config.accept_token) and len(cleaned) <= max_len
 
 
 def build_anthropic_response_from_draft(

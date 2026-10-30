@@ -180,7 +180,7 @@ async def intercept_anthropic_sse_stream(
                 break
 
         if passthrough_mode:
-            metrics.frontier_modified_count += 1
+            metrics.record_turn_outcome(draft=draft, config=config, accepted=False)
             for bchunk in buffered_raw_chunks:
                 yield bchunk
             buffered_raw_chunks.clear()
@@ -188,11 +188,10 @@ async def intercept_anthropic_sse_stream(
     # Stream finished while still in buffering window! Check if it accepted the draft.
     if not passthrough_mode:
         if response_accepted_draft(accumulated_text, config):
-            metrics.frontier_accepted_count += 1
-            saved_tokens = max(0, draft.draft_tokens_est - 2)
+            saved_tokens, _, _ = metrics.record_turn_outcome(
+                draft=draft, config=config, accepted=True
+            )
             saved_usd = (saved_tokens / 1_000_000.0) * config.estimated_output_usd_per_million
-            metrics.estimated_output_tokens_saved += saved_tokens
-            metrics.estimated_usd_saved += saved_usd
             if callable(on_accepted_callback):
                 on_accepted_callback(saved_tokens, saved_usd)
 
@@ -203,7 +202,7 @@ async def intercept_anthropic_sse_stream(
             ):
                 yield sse_bytes
         else:
-            metrics.frontier_modified_count += 1
+            metrics.record_turn_outcome(draft=draft, config=config, accepted=False)
             for bchunk in buffered_raw_chunks:
                 yield bchunk
 
@@ -336,24 +335,23 @@ async def intercept_openai_sse_stream(
                 break
 
         if passthrough_mode:
-            metrics.frontier_modified_count += 1
+            metrics.record_turn_outcome(draft=draft, config=config, accepted=False)
             for bchunk in buffered_raw_chunks:
                 yield bchunk
             buffered_raw_chunks.clear()
 
     if not passthrough_mode:
         if response_accepted_draft(accumulated_text, config):
-            metrics.frontier_accepted_count += 1
-            saved_tokens = max(0, draft.draft_tokens_est - 2)
+            saved_tokens, _, _ = metrics.record_turn_outcome(
+                draft=draft, config=config, accepted=True
+            )
             saved_usd = (saved_tokens / 1_000_000.0) * config.estimated_output_usd_per_million
-            metrics.estimated_output_tokens_saved += saved_tokens
-            metrics.estimated_usd_saved += saved_usd
             if callable(on_accepted_callback):
                 on_accepted_callback(saved_tokens, saved_usd)
 
             for sse_bytes in synthesize_openai_sse_from_draft(draft, model=model):
                 yield sse_bytes
         else:
-            metrics.frontier_modified_count += 1
+            metrics.record_turn_outcome(draft=draft, config=config, accepted=False)
             for bchunk in buffered_raw_chunks:
                 yield bchunk

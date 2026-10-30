@@ -25,6 +25,14 @@ fmt:
 # Everything CI runs
 check: lint test
 
+# Run the A/B speculative benchmark suite (speed, efficiency, accuracy)
+bench *args:
+    uv run thetacode bench {{args}}
+
+# Evaluate a local draft model on coding agent tasks
+eval *args:
+    uv run thetacode eval {{args}}
+
 # Run the CLI, e.g. `just run proxy --help`
 run *args:
     uv run thetacode {{args}}

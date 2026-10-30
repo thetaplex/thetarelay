@@ -1,0 +1,524 @@
+{
+  "metadata": {
+    "date": "2026-10-30",
+    "local_hardware": "Apple Silicon Mac (MLX backend via Ollama)",
+    "local_drafter_model": "gemma4:e4b-mlx",
+    "local_verifier_model": "qwen3.8:27b-mlx",
+    "cloud_frontier_model": "anthropic/claude-opus-4.5 (via OpenRouter API)",
+    "cloud_pricing_usd_per_million": {
+      "input": 5.0,
+      "output": 25.0
+    },
+    "headroom_version": "0.37.0",
+    "thetacode_version": "0.1.0"
+  },
+  "experiment_1_humaneval_10_tasks_opus_4_5": {
+    "description": "10 Canonical OpenAI HumanEval tasks: Direct to OpenRouter anthropic/claude-opus-4.5 vs. ThetaCode Speculative Proxy (gemma4:e4b-mlx -> claude-opus-4.5)",
+    "summary": {
+      "tasks_total": 10,
+      "direct_pass_at_1_pct": 100.0,
+      "speculative_pass_at_1_pct": 100.0,
+      "acceptance_rate_pct": 90.0,
+      "direct_total_ms": 55550.1,
+      "speculative_total_ms": 46915.0,
+      "net_latency_saved_ms": 8635.1,
+      "overall_speedup_factor": 1.18,
+      "accepted_tasks_speedup_range": "1.21x - 1.67x",
+      "direct_output_tokens": 4187,
+      "speculative_output_tokens": 320,
+      "output_token_reduction_pct": 92.4,
+      "direct_total_cost_usd": 0.11154,
+      "speculative_total_cost_usd": 0.02802,
+      "net_cost_reduction_pct": 74.9
+    },
+    "tasks": [
+      {
+        "task_id": "HumanEval/0",
+        "entry_point": "has_close_elements",
+        "direct_ms": 6151.1,
+        "direct_out_tokens": 430,
+        "direct_cost_usd": 0.01159,
+        "direct_pass_at_1": true,
+        "proxy_e2e_ms": 4312.0,
+        "proxy_local_draft_ms": 2398.2,
+        "proxy_frontier_verify_ms": 1913.8,
+        "proxy_accepted": true,
+        "proxy_out_tokens": 7,
+        "proxy_cost_usd": 0.00258,
+        "proxy_pass_at_1": true,
+        "speedup_factor": 1.43
+      },
+      {
+        "task_id": "HumanEval/2",
+        "entry_point": "truncate_number",
+        "direct_ms": 5116.5,
+        "direct_out_tokens": 362,
+        "direct_cost_usd": 0.009645,
+        "direct_pass_at_1": true,
+        "proxy_e2e_ms": 3343.6,
+        "proxy_local_draft_ms": 1182.9,
+        "proxy_frontier_verify_ms": 2160.7,
+        "proxy_accepted": true,
+        "proxy_out_tokens": 7,
+        "proxy_cost_usd": 0.001715,
+        "proxy_pass_at_1": true,
+        "speedup_factor": 1.53
+      },
+      {
+        "task_id": "HumanEval/3",
+        "entry_point": "below_zero",
+        "direct_ms": 4815.6,
+        "direct_out_tokens": 367,
+        "direct_cost_usd": 0.009895,
+        "direct_pass_at_1": true,
+        "proxy_e2e_ms": 6501.7,
+        "proxy_local_draft_ms": 1154.0,
+        "proxy_frontier_verify_ms": 5347.7,
+        "proxy_accepted": true,
+        "proxy_out_tokens": 7,
+        "proxy_cost_usd": 0.00172,
+        "proxy_pass_at_1": true,
+        "speedup_factor": 0.74
+      },
+      {
+        "task_id": "HumanEval/4",
+        "entry_point": "mean_absolute_deviation",
+        "direct_ms": 5484.0,
+        "direct_out_tokens": 458,
+        "direct_cost_usd": 0.01212,
+        "direct_pass_at_1": true,
+        "proxy_e2e_ms": 4530.6,
+        "proxy_local_draft_ms": 2093.3,
+        "proxy_frontier_verify_ms": 2437.3,
+        "proxy_accepted": true,
+        "proxy_out_tokens": 7,
+        "proxy_cost_usd": 0.002175,
+        "proxy_pass_at_1": true,
+        "speedup_factor": 1.21
+      },
+      {
+        "task_id": "HumanEval/5",
+        "entry_point": "intersperse",
+        "direct_ms": 6055.5,
+        "direct_out_tokens": 489,
+        "direct_cost_usd": 0.012895,
+        "direct_pass_at_1": true,
+        "proxy_e2e_ms": 3624.4,
+        "proxy_local_draft_ms": 1780.4,
+        "proxy_frontier_verify_ms": 1844.0,
+        "proxy_accepted": true,
+        "proxy_out_tokens": 7,
+        "proxy_cost_usd": 0.0021,
+        "proxy_pass_at_1": true,
+        "speedup_factor": 1.67
+      },
+      {
+        "task_id": "HumanEval/6",
+        "entry_point": "parse_nested_parens",
+        "direct_ms": 6189.4,
+        "direct_out_tokens": 500,
+        "direct_cost_usd": 0.013185,
+        "direct_pass_at_1": true,
+        "proxy_e2e_ms": 5077.2,
+        "proxy_local_draft_ms": 1876.8,
+        "proxy_frontier_verify_ms": 3200.4,
+        "proxy_accepted": true,
+        "proxy_out_tokens": 7,
+        "proxy_cost_usd": 0.00219,
+        "proxy_pass_at_1": true,
+        "speedup_factor": 1.22
+      },
+      {
+        "task_id": "HumanEval/7",
+        "entry_point": "filter_by_substring",
+        "direct_ms": 4245.3,
+        "direct_out_tokens": 240,
+        "direct_cost_usd": 0.006715,
+        "direct_pass_at_1": true,
+        "proxy_e2e_ms": 2941.2,
+        "proxy_local_draft_ms": 1026.3,
+        "proxy_frontier_verify_ms": 1914.9,
+        "proxy_accepted": true,
+        "proxy_out_tokens": 7,
+        "proxy_cost_usd": 0.00166,
+        "proxy_pass_at_1": true,
+        "speedup_factor": 1.44
+      },
+      {
+        "task_id": "HumanEval/8",
+        "entry_point": "sum_product",
+        "direct_ms": 4651.7,
+        "direct_out_tokens": 341,
+        "direct_cost_usd": 0.009245,
+        "direct_pass_at_1": true,
+        "proxy_e2e_ms": 3780.3,
+        "proxy_local_draft_ms": 1725.3,
+        "proxy_frontier_verify_ms": 2055.0,
+        "proxy_accepted": true,
+        "proxy_out_tokens": 7,
+        "proxy_cost_usd": 0.002185,
+        "proxy_pass_at_1": true,
+        "speedup_factor": 1.23
+      },
+      {
+        "task_id": "HumanEval/9",
+        "entry_point": "rolling_max",
+        "direct_ms": 5657.5,
+        "direct_out_tokens": 500,
+        "direct_cost_usd": 0.013185,
+        "direct_pass_at_1": true,
+        "proxy_e2e_ms": 3525.7,
+        "proxy_local_draft_ms": 1863.2,
+        "proxy_frontier_verify_ms": 1662.5,
+        "proxy_accepted": true,
+        "proxy_out_tokens": 7,
+        "proxy_cost_usd": 0.002195,
+        "proxy_pass_at_1": true,
+        "speedup_factor": 1.6
+      },
+      {
+        "task_id": "HumanEval/10",
+        "entry_point": "make_palindrome",
+        "direct_ms": 7183.5,
+        "direct_out_tokens": 500,
+        "direct_cost_usd": 0.01306,
+        "direct_pass_at_1": true,
+        "proxy_e2e_ms": 9278.3,
+        "proxy_local_draft_ms": 4699.6,
+        "proxy_frontier_verify_ms": 4578.7,
+        "proxy_accepted": false,
+        "proxy_out_tokens": 257,
+        "proxy_cost_usd": 0.0095,
+        "proxy_pass_at_1": true,
+        "speedup_factor": 0.77
+      }
+    ]
+  },
+  "experiment_2_coding_agent_scenarios_opus_4_5": {
+    "description": "5 Coding-Agent Scenarios (Code Refactor, edit_file Tool Call, Pytest Suite Gen, Exponential Backoff, Safe SQLite Query) on anthropic/claude-opus-4.5",
+    "summary": {
+      "direct_total_ms": 32150.0,
+      "proxy_total_ms": 27102.2,
+      "speedup_factor": 1.19,
+      "direct_output_tokens": 2049,
+      "proxy_output_tokens": 628,
+      "output_token_reduction_pct": 69.4,
+      "direct_total_cost_usd": 0.05561,
+      "proxy_total_cost_usd": 0.02636,
+      "net_cost_reduction_pct": 52.6,
+      "acceptance_rate_pct": 80.0
+    },
+    "scenarios": [
+      {
+        "scenario_id": "anth_code_refactor",
+        "category": "code_edit",
+        "direct_ms": 2733.0,
+        "direct_in_tokens": 76,
+        "direct_out_tokens": 76,
+        "direct_cost_usd": 0.00228,
+        "proxy_e2e_ms": 3588.8,
+        "proxy_local_draft_ms": 1444.9,
+        "proxy_frontier_verify_ms": 2143.9,
+        "proxy_accepted": true,
+        "proxy_in_tokens": 245,
+        "proxy_out_tokens": 7,
+        "proxy_cost_usd": 0.0014,
+        "speedup_factor": 0.76,
+        "cost_savings_pct": 38.6
+      },
+      {
+        "scenario_id": "anth_tool_edit_file",
+        "category": "tool_call",
+        "direct_ms": 2945.3,
+        "direct_in_tokens": 668,
+        "direct_out_tokens": 173,
+        "direct_cost_usd": 0.007665,
+        "proxy_e2e_ms": 3033.3,
+        "proxy_local_draft_ms": 1661.6,
+        "proxy_frontier_verify_ms": 1371.7,
+        "proxy_accepted": true,
+        "proxy_in_tokens": 933,
+        "proxy_out_tokens": 7,
+        "proxy_cost_usd": 0.00484,
+        "speedup_factor": 0.97,
+        "cost_savings_pct": 36.9
+      },
+      {
+        "scenario_id": "anth_stream_pytest_gen",
+        "category": "code_edit",
+        "direct_ms": 9290.0,
+        "direct_in_tokens": 44,
+        "direct_out_tokens": 600,
+        "direct_cost_usd": 0.01522,
+        "proxy_e2e_ms": 13189.7,
+        "proxy_local_draft_ms": 4883.1,
+        "proxy_frontier_verify_ms": 8306.6,
+        "proxy_accepted": false,
+        "proxy_in_tokens": 446,
+        "proxy_out_tokens": 600,
+        "proxy_cost_usd": 0.01723,
+        "speedup_factor": 0.7,
+        "cost_savings_pct": -13.2
+      },
+      {
+        "scenario_id": "openai_predicted_outputs",
+        "category": "openai_prediction",
+        "direct_ms": 8024.8,
+        "direct_in_tokens": 46,
+        "direct_out_tokens": 600,
+        "direct_cost_usd": 0.01523,
+        "proxy_e2e_ms": 2889.3,
+        "proxy_local_draft_ms": 981.6,
+        "proxy_frontier_verify_ms": 1907.7,
+        "proxy_accepted": true,
+        "proxy_in_tokens": 204,
+        "proxy_out_tokens": 7,
+        "proxy_cost_usd": 0.001195,
+        "speedup_factor": 2.78,
+        "cost_savings_pct": 92.2
+      },
+      {
+        "scenario_id": "anth_reject_flawed_draft",
+        "category": "rejection_guard",
+        "direct_ms": 9156.9,
+        "direct_in_tokens": 43,
+        "direct_out_tokens": 600,
+        "direct_cost_usd": 0.015215,
+        "proxy_e2e_ms": 4401.1,
+        "proxy_local_draft_ms": 2027.9,
+        "proxy_frontier_verify_ms": 2373.2,
+        "proxy_accepted": true,
+        "proxy_in_tokens": 305,
+        "proxy_out_tokens": 7,
+        "proxy_cost_usd": 0.0017,
+        "speedup_factor": 2.08,
+        "cost_savings_pct": 88.8
+      }
+    ]
+  },
+  "experiment_3_ablation_2x2_headroom_x_thetacode_opus_4_5": {
+    "description": "2x2 Ablation Study on 15,000-token Multi-Turn Coding Agent Traces (with large JSON tool_result diagnostics): With/Without Headroom v0.37.0 x With/Without ThetaCode",
+    "summary": {
+      "1_baseline_no_headroom_no_thetacode": {
+        "total_ms": 8111.0,
+        "total_in_tokens": 45289,
+        "total_out_tokens": 74,
+        "total_cost_usd": 0.22829,
+        "valid_rate_pct": 33.3,
+        "speedup_vs_baseline": 1.0,
+        "cost_reduction_vs_baseline_pct": 0.0,
+        "in_token_reduction_pct": 0.0
+      },
+      "2_headroom_only": {
+        "total_ms": 8773.0,
+        "total_in_tokens": 24907,
+        "total_out_tokens": 322,
+        "total_cost_usd": 0.13259,
+        "valid_rate_pct": 100.0,
+        "speedup_vs_baseline": 0.92,
+        "cost_reduction_vs_baseline_pct": 41.9,
+        "in_token_reduction_pct": 45.0
+      },
+      "3_thetacode_only_raw_15k_context": {
+        "total_ms": 31723.3,
+        "total_in_tokens": 45289,
+        "total_out_tokens": 74,
+        "total_cost_usd": 0.22829,
+        "valid_rate_pct": 33.3,
+        "avg_local_draft_ms": 8007.2,
+        "acceptance_rate_pct": 0.0,
+        "speedup_vs_baseline": 0.26,
+        "cost_reduction_vs_baseline_pct": 0.0,
+        "in_token_reduction_pct": 0.0
+      },
+      "4_headroom_plus_thetacode_combined": {
+        "total_ms": 25083.6,
+        "total_in_tokens": 25407,
+        "total_out_tokens": 21,
+        "total_cost_usd": 0.12756,
+        "valid_rate_pct": 100.0,
+        "avg_local_draft_ms": 6333.0,
+        "acceptance_rate_pct": 100.0,
+        "cost_reduction_vs_baseline_pct": 44.1,
+        "in_token_reduction_pct": 43.9,
+        "out_token_reduction_vs_headroom_only_pct": 93.5
+      }
+    }
+  },
+  "experiment_4_adversarial_guardrail_stress_tests": {
+    "description": "Subtle algorithmic bugs (HumanEval/0 unsorted adjacent-only check; HumanEval/3 final-sum instead of running-balance check) + SQL-injection f-string draft tested against both anthropic/claude-opus-4.5 and qwen3.8:27b-mlx",
+    "opus_4_5_guardrail_results": [
+      {
+        "task_id": "HumanEval/0",
+        "entry_point": "has_close_elements",
+        "buggy_draft_pass_at_1": false,
+        "opus_rejected_bug": true,
+        "recovered_pass_at_1": true,
+        "opus_verify_and_rewrite_ms": 4631.1
+      },
+      {
+        "task_id": "HumanEval/3",
+        "entry_point": "below_zero",
+        "buggy_draft_pass_at_1": false,
+        "opus_rejected_bug": true,
+        "recovered_pass_at_1": true,
+        "opus_verify_and_rewrite_ms": 3872.9
+      }
+    ],
+    "qwen3_8_27b_mlx_guardrail_results": [
+      {
+        "task_id": "HumanEval/0",
+        "buggy_draft_pass_at_1": false,
+        "verifier_rejected_bug": true,
+        "recovered_pass_at_1": true
+      },
+      {
+        "task_id": "HumanEval/3",
+        "buggy_draft_pass_at_1": false,
+        "verifier_rejected_bug": true,
+        "recovered_pass_at_1": true
+      },
+      {
+        "task_id": "anth_reject_flawed_draft",
+        "flaw": "SQL injection via Python f-string interpolation",
+        "verifier_rejected_bug": true,
+        "verifier_response_preview": "<REJECT/> The draft is vulnerable to SQL injection because it uses an f-string to interpolate the email parameter..."
+      }
+    ]
+  },
+  "experiment_5_local_two_phase_gemma4_to_qwen3_8_27b_mlx": {
+    "description": "Zero-swap two-phase local MLX evaluation: gemma4:e4b-mlx drafting -> qwen3.8:27b-mlx verifying across 5 coding-agent scenarios",
+    "summary": {
+      "baseline_total_ms": 65600.1,
+      "speculative_total_ms": 32592.7,
+      "net_latency_saved_ms": 33007.4,
+      "overall_speedup_factor": 2.01,
+      "valid_drafts_accepted": "4/4 (100%)",
+      "flawed_sql_drafts_rejected": "1/1 (100%)",
+      "target_output_tokens_accepted_turns": "13 tokens vs 1023 baseline tokens (-98.7%)"
+    }
+  },
+  "experiment_6_openai_gpt54_humaneval_10": {
+    "description": "OpenAI HumanEval (N=10, HumanEval/0..HumanEval/10): Direct openai/gpt-5.4 ($2.50/M in, $15.00/M out) vs. ThetaCode Proxy (gemma4:e4b-mlx -> openai/gpt-5.4)",
+    "summary": {
+      "total_problems": 10,
+      "baseline_pass_at_1_pct": 100.0,
+      "speculative_pass_at_1_pct": 100.0,
+      "acceptance_rate_pct": 90.0,
+      "accepted_count": 9,
+      "baseline_total_ms": 25169.0,
+      "speculative_total_ms": 33240.0,
+      "baseline_output_tokens": 1339,
+      "speculative_output_tokens": 188,
+      "output_token_reduction_pct": 86.0,
+      "baseline_total_cost_usd": 0.02354,
+      "speculative_total_cost_usd": 0.01187,
+      "net_cost_saved_usd": 0.01167,
+      "cost_reduction_pct": 49.6,
+      "buggy_draft_guardrail_rejection_rate_pct": 100.0,
+      "buggy_draft_recovered_pass_at_1_pct": 100.0
+    },
+    "tasks": [
+      {"task_id": "HumanEval/0", "entry_point": "has_close_elements", "baseline_ms": 3421.0, "baseline_out_tok": 171, "baseline_cost_usd": 0.00299, "baseline_pass_at_1": true, "speculative_ms": 4310.0, "local_draft_ms": 2446.0, "frontier_verify_ms": 1864.0, "accepted": true, "spec_out_tok": 8, "spec_cost_usd": 0.00122, "spec_pass_at_1": true, "speedup_factor": 0.79, "cost_reduction_pct": 59.2},
+      {"task_id": "HumanEval/2", "entry_point": "truncate_number", "baseline_ms": 2245.0, "baseline_out_tok": 93, "baseline_cost_usd": 0.00170, "baseline_pass_at_1": true, "speculative_ms": 2358.0, "local_draft_ms": 1183.0, "frontier_verify_ms": 1175.0, "accepted": true, "spec_out_tok": 8, "spec_cost_usd": 0.00085, "spec_pass_at_1": true, "speedup_factor": 0.95, "cost_reduction_pct": 50.0},
+      {"task_id": "HumanEval/3", "entry_point": "below_zero", "baseline_ms": 2706.0, "baseline_out_tok": 139, "baseline_cost_usd": 0.00246, "baseline_pass_at_1": true, "speculative_ms": 2417.0, "local_draft_ms": 1155.0, "frontier_verify_ms": 1262.0, "accepted": true, "spec_out_tok": 8, "spec_cost_usd": 0.00087, "spec_pass_at_1": true, "speedup_factor": 1.12, "cost_reduction_pct": 64.6},
+      {"task_id": "HumanEval/4", "entry_point": "mean_absolute_deviation", "baseline_ms": 2655.0, "baseline_out_tok": 138, "baseline_cost_usd": 0.00242, "baseline_pass_at_1": true, "speculative_ms": 3372.0, "local_draft_ms": 1954.0, "frontier_verify_ms": 1418.0, "accepted": true, "spec_out_tok": 8, "spec_cost_usd": 0.00106, "spec_pass_at_1": true, "speedup_factor": 0.79, "cost_reduction_pct": 56.2},
+      {"task_id": "HumanEval/5", "entry_point": "intersperse", "baseline_ms": 2512.0, "baseline_out_tok": 139, "baseline_cost_usd": 0.00244, "baseline_pass_at_1": true, "speculative_ms": 2504.0, "local_draft_ms": 1377.0, "frontier_verify_ms": 1127.0, "accepted": true, "spec_out_tok": 8, "spec_cost_usd": 0.00091, "spec_pass_at_1": true, "speedup_factor": 1.00, "cost_reduction_pct": 62.7},
+      {"task_id": "HumanEval/6", "entry_point": "parse_nested_parens", "baseline_ms": 2999.0, "baseline_out_tok": 187, "baseline_cost_usd": 0.00313, "baseline_pass_at_1": true, "speculative_ms": 3107.0, "local_draft_ms": 1921.0, "frontier_verify_ms": 1186.0, "accepted": true, "spec_out_tok": 8, "spec_cost_usd": 0.00103, "spec_pass_at_1": true, "speedup_factor": 0.97, "cost_reduction_pct": 67.1},
+      {"task_id": "HumanEval/7", "entry_point": "filter_by_substring", "baseline_ms": 2416.0, "baseline_out_tok": 106, "baseline_cost_usd": 0.00193, "baseline_pass_at_1": true, "speculative_ms": 2426.0, "local_draft_ms": 1018.0, "frontier_verify_ms": 1408.0, "accepted": true, "spec_out_tok": 8, "spec_cost_usd": 0.00081, "spec_pass_at_1": true, "speedup_factor": 1.00, "cost_reduction_pct": 58.0},
+      {"task_id": "HumanEval/8", "entry_point": "sum_product", "baseline_ms": 2160.0, "baseline_out_tok": 112, "baseline_cost_usd": 0.00203, "baseline_pass_at_1": true, "speculative_ms": 2381.0, "local_draft_ms": 1306.0, "frontier_verify_ms": 1075.0, "accepted": true, "spec_out_tok": 8, "spec_cost_usd": 0.00090, "spec_pass_at_1": true, "speedup_factor": 0.91, "cost_reduction_pct": 55.7},
+      {"task_id": "HumanEval/9", "entry_point": "rolling_max", "baseline_ms": 2183.0, "baseline_out_tok": 148, "baseline_cost_usd": 0.00257, "baseline_pass_at_1": true, "speculative_ms": 2967.0, "local_draft_ms": 1876.0, "frontier_verify_ms": 1091.0, "accepted": true, "spec_out_tok": 8, "spec_cost_usd": 0.00106, "spec_pass_at_1": true, "speedup_factor": 0.74, "cost_reduction_pct": 58.8},
+      {"task_id": "HumanEval/10", "entry_point": "make_palindrome", "baseline_ms": 1872.0, "baseline_out_tok": 106, "baseline_cost_usd": 0.00187, "baseline_pass_at_1": true, "speculative_ms": 7398.0, "local_draft_ms": 4638.0, "frontier_verify_ms": 2760.0, "accepted": false, "spec_out_tok": 116, "spec_cost_usd": 0.00316, "spec_pass_at_1": true, "speedup_factor": 0.25, "cost_reduction_pct": -69.0}
+    ],
+    "guardrails": [
+      {"task_id": "HumanEval/0", "entry_point": "has_close_elements", "buggy_draft_pass_at_1": false, "gpt54_rejected_bug": true, "recovered_pass_at_1": true},
+      {"task_id": "HumanEval/3", "entry_point": "below_zero", "buggy_draft_pass_at_1": false, "gpt54_rejected_bug": true, "recovered_pass_at_1": true}
+    ]
+  },
+  "experiment_7_openai_gpt41_strategy_comparison": {
+    "description": "Comparison of OpenAI Native Predicted Outputs (strategy='prediction') vs. ThetaCode Semantic Verification (strategy='accept_swap') on openai/gpt-4.1 ($2.00/M in, $8.00/M out) across HumanEval/0..5",
+    "summary": {
+      "total_tasks": 5,
+      "baseline_total_ms": 8515.0,
+      "baseline_out_tokens": 672,
+      "baseline_cost_usd": 0.00684,
+      "prediction_total_ms": 13804.0,
+      "prediction_out_tokens": 672,
+      "prediction_cost_usd": 0.00684,
+      "prediction_cost_savings_pct": 0.0,
+      "accept_swap_accepted_tasks": "2/5 (40.0%) on GPT-4.1 (vs 90.0% on GPT-5.4 and Claude Opus 4.5)",
+      "accept_swap_out_tokens_on_accepted_turns": "10 tokens vs 222 baseline tokens (-95.5%)",
+      "accept_swap_cost_savings_on_accepted_turns_pct": 45.5
+    },
+    "tasks": [
+      {"task_id": "HumanEval/0", "baseline_ms": 2342.0, "baseline_out_tok": 170, "baseline_cost_usd": 0.00170, "baseline_pass": true, "prediction_ms": 3417.0, "prediction_out_tok": 170, "prediction_cost_usd": 0.00170, "prediction_pass": true, "accept_swap_ms": 4212.0, "accept_swap_accepted": false, "accept_swap_out_tok": 186, "accept_swap_cost_usd": 0.00237, "accept_swap_pass": true},
+      {"task_id": "HumanEval/2", "baseline_ms": 1217.0, "baseline_out_tok": 86, "baseline_cost_usd": 0.00094, "baseline_pass": true, "prediction_ms": 2316.0, "prediction_out_tok": 86, "prediction_cost_usd": 0.00094, "prediction_pass": true, "accept_swap_ms": 2097.0, "accept_swap_accepted": true, "accept_swap_out_tok": 5, "accept_swap_cost_usd": 0.00063, "accept_swap_pass": true},
+      {"task_id": "HumanEval/3", "baseline_ms": 1527.0, "baseline_out_tok": 136, "baseline_cost_usd": 0.00139, "baseline_pass": true, "prediction_ms": 2336.0, "prediction_out_tok": 136, "prediction_cost_usd": 0.00139, "prediction_pass": true, "accept_swap_ms": 1976.0, "accept_swap_accepted": true, "accept_swap_out_tok": 5, "accept_swap_cost_usd": 0.00064, "accept_swap_pass": true},
+      {"task_id": "HumanEval/4", "baseline_ms": 2125.0, "baseline_out_tok": 141, "baseline_cost_usd": 0.00141, "baseline_pass": true, "prediction_ms": 3159.0, "prediction_out_tok": 141, "prediction_cost_usd": 0.00141, "prediction_pass": true, "accept_swap_ms": 3199.0, "accept_swap_accepted": false, "accept_swap_out_tok": 136, "accept_swap_cost_usd": 0.00185, "accept_swap_pass": true},
+      {"task_id": "HumanEval/5", "baseline_ms": 1304.0, "baseline_out_tok": 139, "baseline_cost_usd": 0.00140, "baseline_pass": true, "prediction_ms": 2576.0, "prediction_out_tok": 139, "prediction_cost_usd": 0.00140, "prediction_pass": true, "accept_swap_ms": 3672.0, "accept_swap_accepted": false, "accept_swap_out_tok": 139, "accept_swap_cost_usd": 0.00175, "accept_swap_pass": true}
+    ]
+  },
+  "experiment_8_openai_gpt54_headroom_2x2_ablation": {
+    "description": "2x2 Ablation Study (Headroom v0.37.0 x ThetaCode) on openai/gpt-5.4 across 3 multi-turn coding agent traces (~13,800 tokens/turn)",
+    "summary_across_3_traces": {
+      "arm1_baseline": {
+        "total_in_tokens": 41420,
+        "total_out_tokens": 260,
+        "total_cost_usd": 0.078074,
+        "total_latency_ms": 7449.8,
+        "ast_valid_rate_pct": 100.0
+      },
+      "arm2_headroom_only": {
+        "total_in_tokens": 20999,
+        "total_out_tokens": 202,
+        "total_cost_usd": 0.039975,
+        "total_latency_ms": 5860.2,
+        "in_token_reduction_pct": 49.3,
+        "cost_reduction_vs_baseline_pct": 48.8,
+        "speedup_vs_baseline": 1.27,
+        "ast_valid_rate_pct": 100.0
+      },
+      "arm3_thetacode_only_unbounded_local": {
+        "total_in_tokens": 41420,
+        "total_out_tokens": 208,
+        "total_cost_usd": 0.018542,
+        "total_latency_ms": 30070.6,
+        "acceptance_rate_pct": 0.0,
+        "note": "Without Headroom compression or tail bounding, raw 13.8k-token tool history causes local 4B model to hit 8.0s prefill timeout",
+        "ast_valid_rate_pct": 100.0
+      },
+      "arm4_headroom_plus_thetacode": {
+        "total_in_tokens": 21437,
+        "total_out_tokens": 24,
+        "total_cost_usd": 0.011905,
+        "total_latency_ms": 19329.4,
+        "acceptance_rate_pct": 100.0,
+        "in_token_reduction_pct": 48.2,
+        "out_token_reduction_vs_baseline_pct": 90.8,
+        "out_token_reduction_vs_headroom_only_pct": 88.1,
+        "cost_reduction_vs_baseline_pct": 84.8,
+        "cost_reduction_vs_headroom_only_pct": 70.2,
+        "ast_valid_rate_pct": 100.0
+      }
+    }
+  },
+  "experiment_9_coding_agent_6_step_trajectory": {
+    "description": "6-Step Real Coding Agent Trajectory (grep_search -> read_file -> edit_file -> run_command pytest -> final summary -> hard async concurrency stampede) on anthropic/claude-opus-4.5 and openai/gpt-5.4 with gemma4:e4b-mlx local drafter",
+    "opus_4_5_trajectory": [
+      {"step_id": "step1_grep_navigation", "category": "Bucket 1: Navigation Tool Call (grep_search)", "expected_tool": "grep_search", "baseline_ms": 3519.0, "baseline_out_tok": 75, "baseline_cost_usd": 0.00660, "baseline_tool": "grep_search", "speculative_ms": 3315.0, "local_draft_ms": 1043.0, "frontier_verify_ms": 2272.0, "accepted": true, "spec_out_tok": 7, "spec_cost_usd": 0.00577, "spec_tool": "grep_search", "tool_match": true},
+      {"step_id": "step2_read_file_after_grep", "category": "Bucket 1: Mechanical Inspection Tool Call (read_file)", "expected_tool": "read_file", "baseline_ms": 2414.0, "baseline_out_tok": 61, "baseline_cost_usd": 0.00696, "baseline_tool": "read_file", "speculative_ms": 4831.0, "local_draft_ms": 2062.0, "frontier_verify_ms": 2769.0, "accepted": true, "spec_out_tok": 7, "spec_cost_usd": 0.00647, "spec_tool": "read_file", "tool_match": true},
+      {"step_id": "step3_edit_file_bugfix", "category": "Bucket 2: Localized Surgical Patch (edit_file)", "expected_tool": "edit_file", "baseline_ms": 3904.0, "baseline_out_tok": 212, "baseline_cost_usd": 0.01203, "baseline_tool": "edit_file", "speculative_ms": 6810.0, "local_draft_ms": 4246.0, "frontier_verify_ms": 2564.0, "accepted": false, "spec_out_tok": 105, "spec_cost_usd": 0.01091, "spec_tool": "edit_file", "tool_match": true},
+      {"step_id": "step4_run_pytest", "category": "Bucket 1: Verification Tool Call (run_command pytest)", "expected_tool": "run_command", "baseline_ms": 2434.0, "baseline_out_tok": 64, "baseline_cost_usd": 0.00922, "baseline_tool": "run_command", "speculative_ms": 3190.0, "local_draft_ms": 1676.0, "frontier_verify_ms": 1514.0, "accepted": true, "spec_out_tok": 7, "spec_cost_usd": 0.00857, "spec_tool": null, "tool_match": false},
+      {"step_id": "step5_final_summary", "category": "Bucket 2: Final Turn Summary (No Tool Call)", "expected_tool": null, "baseline_ms": 3524.0, "baseline_out_tok": 155, "baseline_cost_usd": 0.01197, "baseline_tool": null, "speculative_ms": 2881.0, "local_draft_ms": 1454.0, "frontier_verify_ms": 1427.0, "accepted": true, "spec_out_tok": 7, "spec_cost_usd": 0.00901, "spec_tool": null, "tool_match": true},
+      {"step_id": "step6_hard_concurrency_stampede", "category": "Bucket 3: Complex Concurrency Stampede Deduplication", "expected_tool": "edit_file", "baseline_ms": 2124.0, "baseline_out_tok": 61, "baseline_cost_usd": 0.00789, "baseline_tool": "read_file", "speculative_ms": 3955.0, "local_draft_ms": 1955.0, "frontier_verify_ms": 2000.0, "accepted": false, "spec_out_tok": 61, "spec_cost_usd": 0.00874, "spec_tool": "read_file", "tool_match": true}
+    ],
+    "gpt_5_4_trajectory": [
+      {"step_id": "step1_grep_navigation", "category": "Bucket 1: Navigation Tool Call (grep_search)", "expected_tool": "grep_search", "baseline_ms": 1896.0, "baseline_out_tok": 26, "baseline_cost_usd": 0.00105, "baseline_tool": "grep_search", "speculative_ms": 1635.0, "local_draft_ms": 388.0, "frontier_verify_ms": 1247.0, "accepted": false, "spec_out_tok": 26, "spec_cost_usd": 0.00141, "spec_tool": "grep_search", "tool_match": true},
+      {"step_id": "step2_read_file_after_grep", "category": "Bucket 1: Mechanical Inspection Tool Call (read_file)", "expected_tool": "read_file", "baseline_ms": 1884.0, "baseline_out_tok": 53, "baseline_cost_usd": 0.00166, "baseline_tool": "read_file", "speculative_ms": 3084.0, "local_draft_ms": 1818.0, "frontier_verify_ms": 1266.0, "accepted": false, "spec_out_tok": 23, "spec_cost_usd": 0.00156, "spec_tool": "read_file", "tool_match": true},
+      {"step_id": "step3_edit_file_bugfix", "category": "Bucket 2: Localized Surgical Patch (edit_file)", "expected_tool": "edit_file", "baseline_ms": 2169.0, "baseline_out_tok": 104, "baseline_cost_usd": 0.00291, "baseline_tool": "edit_file", "speculative_ms": 4177.0, "local_draft_ms": 2593.0, "frontier_verify_ms": 1584.0, "accepted": false, "spec_out_tok": 41, "spec_cost_usd": 0.00265, "spec_tool": "edit_file", "tool_match": true},
+      {"step_id": "step4_run_pytest", "category": "Bucket 1: Verification Tool Call (run_command pytest)", "expected_tool": "run_command", "baseline_ms": 1241.0, "baseline_out_tok": 26, "baseline_cost_usd": 0.00200, "baseline_tool": "run_command", "speculative_ms": 2009.0, "local_draft_ms": 840.0, "frontier_verify_ms": 1169.0, "accepted": false, "spec_out_tok": 26, "spec_cost_usd": 0.00234, "spec_tool": "run_command", "tool_match": true},
+      {"step_id": "step5_final_summary", "category": "Bucket 2: Final Turn Summary (No Tool Call)", "expected_tool": null, "baseline_ms": 2005.0, "baseline_out_tok": 80, "baseline_cost_usd": 0.00294, "baseline_tool": null, "speculative_ms": 2588.0, "local_draft_ms": 1047.0, "frontier_verify_ms": 1541.0, "accepted": true, "spec_out_tok": 8, "spec_cost_usd": 0.00218, "spec_tool": null, "tool_match": true},
+      {"step_id": "step6_hard_concurrency_stampede", "category": "Bucket 3: Complex Concurrency Stampede Deduplication", "expected_tool": "edit_file", "baseline_ms": 1635.0, "baseline_out_tok": 23, "baseline_cost_usd": 0.00168, "baseline_tool": "read_file", "speculative_ms": 1740.0, "local_draft_ms": 360.0, "frontier_verify_ms": 1380.0, "accepted": false, "spec_out_tok": 23, "spec_cost_usd": 0.00203, "spec_tool": "read_file", "tool_match": true}
+    ]
+  }
+}

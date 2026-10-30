@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -155,11 +156,15 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
         else:
             metrics.drafts_succeeded += 1
             metrics.local_draft_latency_ms_sum += draft.latency_ms
+            metrics.local_draft_latencies_ms.append(draft.latency_ms)
             outbound_body, active_mode = inject_draft_into_body(
                 body, provider="anthropic", draft=draft, config=cfg
             )
 
-        upstream_url = f"{cfg.anthropic_upstream_url}/v1/messages"
+        base_anth = cfg.anthropic_upstream_url.rstrip("/")
+        upstream_url = (
+            f"{base_anth}/messages" if base_anth.endswith("/v1") else f"{base_anth}/v1/messages"
+        )
         if request.url.query:
             upstream_url = f"{upstream_url}?{request.url.query}"
         outbound_headers = _clean_outbound_headers(request.headers)
@@ -224,11 +229,13 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
             )
 
         # Non-streaming path
+        frontier_started = time.perf_counter()
         upstream_resp = await client.post(
             upstream_url,
             content=json.dumps(outbound_body).encode("utf-8"),
             headers=outbound_headers,
         )
+        frontier_ms = (time.perf_counter() - frontier_started) * 1000.0
         resp_headers = {
             **_clean_inbound_response_headers(upstream_resp.headers),
             **spec_headers,
@@ -239,17 +246,25 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                 resp_json = upstream_resp.json()
                 resp_text = extract_text_from_content(resp_json.get("content", []))
                 if response_accepted_draft(resp_text, cfg):
-                    metrics.frontier_accepted_count += 1
-                    saved_tok = max(0, draft.draft_tokens_est - 2)
-                    saved_usd = (saved_tok / 1_000_000.0) * cfg.estimated_output_usd_per_million
-                    metrics.estimated_output_tokens_saved += saved_tok
-                    metrics.estimated_usd_saved += saved_usd
+                    saved_tok, _, _ = metrics.record_turn_outcome(
+                        draft=draft,
+                        config=cfg,
+                        accepted=True,
+                        active_mode=active_mode,
+                        frontier_latency_ms=frontier_ms,
+                    )
                     resp_headers["x-thetacode-accepted"] = "true"
                     resp_headers["x-thetacode-tokens-saved"] = str(saved_tok)
                     swapped = build_anthropic_response_from_draft(resp_json, draft)
                     return JSONResponse(status_code=200, content=swapped, headers=resp_headers)
                 else:
-                    metrics.frontier_modified_count += 1
+                    metrics.record_turn_outcome(
+                        draft=draft,
+                        config=cfg,
+                        accepted=False,
+                        active_mode=active_mode,
+                        frontier_latency_ms=frontier_ms,
+                    )
                     resp_headers["x-thetacode-accepted"] = "false"
             except Exception as exc:
                 logger.warning("Failed to inspect non-streaming Anthropic response: %s", exc)
@@ -294,13 +309,20 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
         else:
             metrics.drafts_succeeded += 1
             metrics.local_draft_latency_ms_sum += draft.latency_ms
+            metrics.local_draft_latencies_ms.append(draft.latency_ms)
             outbound_body, active_mode = inject_draft_into_body(
                 body, provider="openai", draft=draft, config=cfg
             )
             if active_mode == "openai_prediction":
                 metrics.openai_prediction_injected_count += 1
+                metrics.prefix_cache_preserved_count += 1
 
-        upstream_url = f"{cfg.openai_upstream_url}/v1/chat/completions"
+        base_oai = cfg.openai_upstream_url.rstrip("/")
+        upstream_url = (
+            f"{base_oai}/chat/completions"
+            if base_oai.endswith("/v1")
+            else f"{base_oai}/v1/chat/completions"
+        )
         if request.url.query:
             upstream_url = f"{upstream_url}?{request.url.query}"
         outbound_headers = _clean_outbound_headers(request.headers)
@@ -366,11 +388,13 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
             )
 
         # Non-streaming path
+        frontier_started = time.perf_counter()
         upstream_resp = await client.post(
             upstream_url,
             content=json.dumps(outbound_body).encode("utf-8"),
             headers=outbound_headers,
         )
+        frontier_ms = (time.perf_counter() - frontier_started) * 1000.0
         resp_headers = {
             **_clean_inbound_response_headers(upstream_resp.headers),
             **spec_headers,
@@ -384,17 +408,25 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                     msg = (choices[0] or {}).get("message") or {}
                     resp_text = str(msg.get("content") or "")
                     if response_accepted_draft(resp_text, cfg):
-                        metrics.frontier_accepted_count += 1
-                        saved_tok = max(0, draft.draft_tokens_est - 2)
-                        saved_usd = (saved_tok / 1_000_000.0) * cfg.estimated_output_usd_per_million
-                        metrics.estimated_output_tokens_saved += saved_tok
-                        metrics.estimated_usd_saved += saved_usd
+                        saved_tok, _, _ = metrics.record_turn_outcome(
+                            draft=draft,
+                            config=cfg,
+                            accepted=True,
+                            active_mode=active_mode,
+                            frontier_latency_ms=frontier_ms,
+                        )
                         resp_headers["x-thetacode-accepted"] = "true"
                         resp_headers["x-thetacode-tokens-saved"] = str(saved_tok)
                         swapped = build_openai_response_from_draft(resp_json, draft)
                         return JSONResponse(status_code=200, content=swapped, headers=resp_headers)
                     else:
-                        metrics.frontier_modified_count += 1
+                        metrics.record_turn_outcome(
+                            draft=draft,
+                            config=cfg,
+                            accepted=False,
+                            active_mode=active_mode,
+                            frontier_latency_ms=frontier_ms,
+                        )
                         resp_headers["x-thetacode-accepted"] = "false"
             except Exception as exc:
                 logger.warning("Failed to inspect non-streaming OpenAI response: %s", exc)
