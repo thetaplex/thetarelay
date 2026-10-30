@@ -1,4 +1,4 @@
-"""Standalone FastAPI Speculative Proxy Server (with optional embedded Headroom CompressionMiddleware)."""
+"""Standalone FastAPI Speculative Proxy Server (with optional embedded Headroom middleware)."""
 
 from __future__ import annotations
 
@@ -92,7 +92,9 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
             logger.info("Embedded Headroom CompressionMiddleware enabled.")
         except ImportError:
             app.state.headroom_middleware_active = False
-            logger.info("headroom-ai not found in environment; running without in-process compression.")
+            logger.info(
+                "headroom-ai not found in environment; running without in-process compression."
+            )
     else:
         app.state.headroom_middleware_active = False
 
@@ -182,7 +184,12 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                 **spec_headers,
             }
 
-            if upstream_resp.status_code != 200 or not draft.has_draft or active_mode != "accept_swap":
+            if (
+                upstream_resp.status_code != 200
+                or not draft.has_draft
+                or active_mode != "accept_swap"
+            ):
+
                 async def raw_stream() -> AsyncIterator[bytes]:
                     try:
                         async for chunk in upstream_resp.aiter_bytes():
@@ -318,7 +325,12 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                 **spec_headers,
             }
 
-            if upstream_resp.status_code != 200 or not draft.has_draft or active_mode != "accept_swap":
+            if (
+                upstream_resp.status_code != 200
+                or not draft.has_draft
+                or active_mode != "accept_swap"
+            ):
+
                 async def raw_stream() -> AsyncIterator[bytes]:
                     try:
                         async for chunk in upstream_resp.aiter_bytes():

@@ -1,0 +1,20 @@
+name: Feature request
+description: Suggest a change, a new speculative strategy, or a new provider integration.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you would like to happen.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

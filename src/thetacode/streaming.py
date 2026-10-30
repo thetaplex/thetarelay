@@ -20,9 +20,7 @@ def synthesize_anthropic_sse_from_draft(
     events: list[bytes] = []
 
     if message_start_event:
-        events.append(
-            f"event: message_start\ndata: {json.dumps(message_start_event)}\n\n".encode("utf-8")
-        )
+        events.append(f"event: message_start\ndata: {json.dumps(message_start_event)}\n\n".encode())
     else:
         default_start = {
             "type": "message_start",
@@ -36,9 +34,7 @@ def synthesize_anthropic_sse_from_draft(
                 "usage": {"input_tokens": 0, "output_tokens": 1},
             },
         }
-        events.append(
-            f"event: message_start\ndata: {json.dumps(default_start)}\n\n".encode("utf-8")
-        )
+        events.append(f"event: message_start\ndata: {json.dumps(default_start)}\n\n".encode())
 
     block_idx = 0
     if draft.text.strip():
@@ -47,21 +43,15 @@ def synthesize_anthropic_sse_from_draft(
             "index": block_idx,
             "content_block": {"type": "text", "text": ""},
         }
-        events.append(
-            f"event: content_block_start\ndata: {json.dumps(block_start)}\n\n".encode("utf-8")
-        )
+        events.append(f"event: content_block_start\ndata: {json.dumps(block_start)}\n\n".encode())
         block_delta = {
             "type": "content_block_delta",
             "index": block_idx,
             "delta": {"type": "text_delta", "text": draft.text},
         }
-        events.append(
-            f"event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n".encode("utf-8")
-        )
+        events.append(f"event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n".encode())
         block_stop = {"type": "content_block_stop", "index": block_idx}
-        events.append(
-            f"event: content_block_stop\ndata: {json.dumps(block_stop)}\n\n".encode("utf-8")
-        )
+        events.append(f"event: content_block_stop\ndata: {json.dumps(block_stop)}\n\n".encode())
         block_idx += 1
 
     for tc in draft.tool_calls:
@@ -75,9 +65,7 @@ def synthesize_anthropic_sse_from_draft(
                 "input": {},
             },
         }
-        events.append(
-            f"event: content_block_start\ndata: {json.dumps(block_start)}\n\n".encode("utf-8")
-        )
+        events.append(f"event: content_block_start\ndata: {json.dumps(block_start)}\n\n".encode())
         block_delta = {
             "type": "content_block_delta",
             "index": block_idx,
@@ -86,13 +74,9 @@ def synthesize_anthropic_sse_from_draft(
                 "partial_json": json.dumps(tc.get("input", {})),
             },
         }
-        events.append(
-            f"event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n".encode("utf-8")
-        )
+        events.append(f"event: content_block_delta\ndata: {json.dumps(block_delta)}\n\n".encode())
         block_stop = {"type": "content_block_stop", "index": block_idx}
-        events.append(
-            f"event: content_block_stop\ndata: {json.dumps(block_stop)}\n\n".encode("utf-8")
-        )
+        events.append(f"event: content_block_stop\ndata: {json.dumps(block_stop)}\n\n".encode())
         block_idx += 1
 
     stop_reason = "tool_use" if draft.tool_calls else "end_turn"
@@ -101,7 +85,7 @@ def synthesize_anthropic_sse_from_draft(
         "delta": {"stop_reason": stop_reason, "stop_sequence": None},
         "usage": usage_delta or {"output_tokens": 1},
     }
-    events.append(f"event: message_delta\ndata: {json.dumps(msg_delta)}\n\n".encode("utf-8"))
+    events.append(f"event: message_delta\ndata: {json.dumps(msg_delta)}\n\n".encode())
     events.append(b'event: message_stop\ndata: {"type": "message_stop"}\n\n')
     return events
 
@@ -184,7 +168,11 @@ async def intercept_anthropic_sse_stream(
             if saw_non_text_content_block:
                 passthrough_mode = True
                 break
-            if stripped and not accept_token.startswith(stripped) and not stripped.startswith(accept_token):
+            if (
+                stripped
+                and not accept_token.startswith(stripped)
+                and not stripped.startswith(accept_token)
+            ):
                 passthrough_mode = True
                 break
             if len(stripped) > len(accept_token) + 8:
@@ -241,7 +229,7 @@ def synthesize_openai_sse_from_draft(
                 }
             ],
         }
-        events.append(f"data: {json.dumps(chunk)}\n\n".encode("utf-8"))
+        events.append(f"data: {json.dumps(chunk)}\n\n".encode())
 
     for idx, tc in enumerate(draft.tool_calls):
         chunk = {
@@ -268,7 +256,7 @@ def synthesize_openai_sse_from_draft(
                 }
             ],
         }
-        events.append(f"data: {json.dumps(chunk)}\n\n".encode("utf-8"))
+        events.append(f"data: {json.dumps(chunk)}\n\n".encode())
 
     finish_reason = "tool_calls" if draft.tool_calls else "stop"
     stop_chunk = {
@@ -277,7 +265,7 @@ def synthesize_openai_sse_from_draft(
         "model": model,
         "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
     }
-    events.append(f"data: {json.dumps(stop_chunk)}\n\n".encode("utf-8"))
+    events.append(f"data: {json.dumps(stop_chunk)}\n\n".encode())
     events.append(b"data: [DONE]\n\n")
     return events
 
@@ -336,7 +324,11 @@ async def intercept_openai_sse_stream(
             if saw_tool_calls:
                 passthrough_mode = True
                 break
-            if stripped and not accept_token.startswith(stripped) and not stripped.startswith(accept_token):
+            if (
+                stripped
+                and not accept_token.startswith(stripped)
+                and not stripped.startswith(accept_token)
+            ):
                 passthrough_mode = True
                 break
             if len(stripped) > len(accept_token) + 8:

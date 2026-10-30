@@ -45,7 +45,7 @@ class SpeculativeConfig:
     anthropic_upstream_url: str = "https://api.anthropic.com"
     openai_upstream_url: str = "https://api.openai.com"
 
-    # Local Draft Model settings (OpenAI-compatible endpoint: Ollama, MLX, llama.cpp, vLLM, LM Studio)
+    # Local Draft Model settings (OpenAI-compatible endpoint: Ollama, MLX, llama.cpp, vLLM)
     local_base_url: str = "http://127.0.0.1:11434/v1"
     local_model: str = "qwen2.5-coder:7b"
     local_api_key: str = "local"
@@ -57,14 +57,14 @@ class SpeculativeConfig:
     local_max_context_chars: int = 24000
     local_recent_messages_limit: int = 10
 
-    # Speculative strategy
-    # - "auto": Uses `prediction` (Predicted Outputs) for OpenAI models and `<ACCEPT/>` verification for Anthropic
-    # - "accept_swap": Uses `<ACCEPT/>` verification + instant draft swap on both Anthropic and OpenAI
-    # - "prediction": Uses OpenAI `prediction` parameter only
-    # - "context_only": Injects `<speculative_draft>` as advisory context without `<ACCEPT/>` short-circuiting
+    # Speculative strategy:
+    # - "auto": `prediction` for OpenAI text, `<ACCEPT/>` verification for Anthropic & tools
+    # - "accept_swap": `<ACCEPT/>` verification + instant draft swap on both Anthropic and OpenAI
+    # - "prediction": OpenAI `prediction` parameter only
+    # - "context_only": Inject `<speculative_draft>` without `<ACCEPT/>` short-circuiting
     strategy: str = "auto"
 
-    # Selective speculation: only draft when the turn looks like code generation/editing or substantive reasoning
+    # Selective speculation: only draft on substantive code generation/editing turns
     selective_speculation: bool = True
     min_prompt_chars_for_draft: int = 15
 
@@ -72,9 +72,9 @@ class SpeculativeConfig:
     enable_headroom_middleware: bool = True
 
     # Token marker used for fast verification short-circuiting
-    accept_token: str = "<ACCEPT/>"
+    accept_token: str = "<ACCEPT/>"  # noqa: S105
 
-    # Estimated output token price ($ per 1M tokens) for attribution when <ACCEPT/> saves frontier generation
+    # Estimated output token price ($ per 1M tokens) for savings attribution
     estimated_output_usd_per_million: float = 15.0
 
     # Excluded model substrings (e.g., haiku or small fast models that don't need drafting)

@@ -15,7 +15,9 @@ from .proxy import create_app
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="thetacode",
-        description="ThetaCode: Speculative Local-to-Frontier Proxy & Headroom Extension for Coding Agents",
+        description=(
+            "ThetaCode: Speculative Local-to-Frontier Proxy & Headroom Extension for Coding Agents"
+        ),
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -52,7 +54,10 @@ def main(argv: list[str] | None = None) -> None:
     proxy_parser.add_argument(
         "--no-headroom-middleware",
         action="store_true",
-        help="Disable embedded Headroom CompressionMiddleware (use when chaining with `headroom proxy`)",
+        help=(
+            "Disable embedded Headroom CompressionMiddleware "
+            "(use when chaining with `headroom proxy`)"
+        ),
     )
 
     args = parser.parse_args(argv)

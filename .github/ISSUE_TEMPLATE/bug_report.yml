@@ -1,0 +1,39 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not paste API keys or tokens. Security issues go through SECURITY.md, not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Command you ran, what you expected, and what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: Full output, with secrets removed.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: thetacode version
+      description: Version of `thetacode`, or the commit hash.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: OS and Python version, e.g. macOS 15, Python 3.13.
+    validations:
+      required: true
+  - type: input
+    id: target
+    attributes:
+      label: Local drafter and frontier model
+      placeholder: ollama qwen2.5-coder:7b / claude-sonnet-4-5

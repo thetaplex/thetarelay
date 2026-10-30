@@ -3,28 +3,25 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import MagicMock
 
 import httpx
 import pytest
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 from thetacode.config import SpeculativeConfig
 from thetacode.engine import (
     DraftResult,
     SpeculativeMetrics,
-    build_anthropic_response_from_draft,
-    build_openai_response_from_draft,
     convert_to_openai_draft_payload,
     inject_draft_into_body,
-    response_accepted_draft,
     should_speculate,
 )
 from thetacode.headroom_ext import ThetaCodeStreamingResponseMiddleware, ThetaCodeTurnHook
 from thetacode.proxy import create_app
-from thetacode.streaming import intercept_anthropic_sse_stream, intercept_openai_sse_stream
+from thetacode.streaming import intercept_anthropic_sse_stream
 
 
 def test_should_speculate_filters_small_models_and_short_prompts() -> None:
@@ -32,7 +29,10 @@ def test_should_speculate_filters_small_models_and_short_prompts() -> None:
 
     # Small model skipped
     ok, reason = should_speculate(
-        {"model": "claude-3-5-haiku-latest", "messages": [{"role": "user", "content": "Write a full parser"}]},
+        {
+            "model": "claude-3-5-haiku-latest",
+            "messages": [{"role": "user", "content": "Write a full parser"}],
+        },
         provider="anthropic",
         config=cfg,
     )
@@ -52,7 +52,9 @@ def test_should_speculate_filters_small_models_and_short_prompts() -> None:
     ok, reason = should_speculate(
         {
             "model": "claude-sonnet-4-5",
-            "messages": [{"role": "user", "content": "Refactor the authentication middleware in auth.py"}],
+            "messages": [
+                {"role": "user", "content": "Refactor the authentication middleware in auth.py"}
+            ],
         },
         provider="anthropic",
         config=cfg,
@@ -154,14 +156,34 @@ async def test_streaming_anthropic_accept_swap_and_passthrough() -> None:
         draft_tokens_est=120,
     )
 
-    # Case 1: Frontier model outputs `<ACCEPT/>` -> stream is replaced with full draft text + tool_use
-    async def mock_accept_stream():
-        yield b'event: message_start\ndata: {"type": "message_start", "message": {"id": "msg_1", "role": "assistant", "usage": {"input_tokens": 500, "output_tokens": 1}}}\n\n'
-        yield b'event: content_block_start\ndata: {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}\n\n'
-        yield b'event: content_block_delta\ndata: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "<ACC"}}\n\n'
-        yield b'event: content_block_delta\ndata: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "EPT/>"}}\n\n'
+    # Case 1: Frontier model outputs `<ACCEPT/>` -> stream is replaced with draft text + tool_use
+    async def mock_accept_stream() -> AsyncIterator[bytes]:
+        yield (
+            b"event: message_start\ndata: "
+            b'{"type": "message_start", "message": {"id": "msg_1", "role": "assistant", '
+            b'"usage": {"input_tokens": 500, "output_tokens": 1}}}\n\n'
+        )
+        yield (
+            b"event: content_block_start\ndata: "
+            b'{"type": "content_block_start", "index": 0, '
+            b'"content_block": {"type": "text", "text": ""}}\n\n'
+        )
+        yield (
+            b"event: content_block_delta\ndata: "
+            b'{"type": "content_block_delta", "index": 0, '
+            b'"delta": {"type": "text_delta", "text": "<ACC"}}\n\n'
+        )
+        yield (
+            b"event: content_block_delta\ndata: "
+            b'{"type": "content_block_delta", "index": 0, '
+            b'"delta": {"type": "text_delta", "text": "EPT/>"}}\n\n'
+        )
         yield b'event: content_block_stop\ndata: {"type": "content_block_stop", "index": 0}\n\n'
-        yield b'event: message_delta\ndata: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 3}}\n\n'
+        yield (
+            b"event: message_delta\ndata: "
+            b'{"type": "message_delta", "delta": {"stop_reason": "end_turn"}, '
+            b'"usage": {"output_tokens": 3}}\n\n'
+        )
         yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
 
     chunks = [
@@ -179,10 +201,21 @@ async def test_streaming_anthropic_accept_swap_and_passthrough() -> None:
     assert metrics.estimated_output_tokens_saved == 118
 
     # Case 2: Frontier model rejects draft and writes its own response -> immediate passthrough
-    async def mock_reject_stream():
-        yield b'event: message_start\ndata: {"type": "message_start", "message": {"id": "msg_2", "role": "assistant"}}\n\n'
-        yield b'event: content_block_start\ndata: {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}\n\n'
-        yield b'event: content_block_delta\ndata: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Actually, let us check tests first."}}\n\n'
+    async def mock_reject_stream() -> AsyncIterator[bytes]:
+        yield (
+            b"event: message_start\ndata: "
+            b'{"type": "message_start", "message": {"id": "msg_2", "role": "assistant"}}\n\n'
+        )
+        yield (
+            b"event: content_block_start\ndata: "
+            b'{"type": "content_block_start", "index": 0, '
+            b'"content_block": {"type": "text", "text": ""}}\n\n'
+        )
+        yield (
+            b"event: content_block_delta\ndata: "
+            b'{"type": "content_block_delta", "index": 0, '
+            b'"delta": {"type": "text_delta", "text": "Actually, let us check tests first."}}\n\n'
+        )
         yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
 
     reject_chunks = [
@@ -290,7 +323,9 @@ async def test_end_to_end_proxy_with_mock_local_and_frontier() -> None:
                 "messages": [
                     {
                         "role": "user",
-                        "content": "Write a python function multiply(x, y) that multiplies two numbers.",
+                        "content": (
+                            "Write a python function multiply(x, y) that multiplies two numbers."
+                        ),
                     }
                 ],
                 "stream": False,
@@ -303,7 +338,7 @@ async def test_end_to_end_proxy_with_mock_local_and_frontier() -> None:
         assert anth_data["content"][0]["text"] == "def multiply(x, y):\n    return x * y\n"
         assert "<speculative_draft>" in captured_frontier_requests[0]["messages"][0]["content"]
 
-        # Test 2: OpenAI `/v1/chat/completions` -> Local drafts `multiply`, Proxy injects `prediction`
+        # Test 2: OpenAI `/v1/chat/completions` -> Local drafts `multiply`, injects `prediction`
         oai_resp = await client.post(
             "/v1/chat/completions",
             json={
@@ -311,7 +346,9 @@ async def test_end_to_end_proxy_with_mock_local_and_frontier() -> None:
                 "messages": [
                     {
                         "role": "user",
-                        "content": "Write a python function multiply(x, y) that multiplies two numbers.",
+                        "content": (
+                            "Write a python function multiply(x, y) that multiplies two numbers."
+                        ),
                     }
                 ],
                 "stream": False,
@@ -340,12 +377,8 @@ async def test_end_to_end_proxy_with_mock_local_and_frontier() -> None:
 async def test_headroom_turn_hook_and_streaming_middleware() -> None:
     """Verify native Headroom TurnHook + StreamingResponseMiddleware integration."""
     from dataclasses import dataclass, field
-    from fastapi import FastAPI, Request
+
     from fastapi.responses import StreamingResponse
-    from thetacode.headroom_ext import (
-        ThetaCodeStreamingResponseMiddleware,
-        ThetaCodeTurnHook,
-    )
 
     @dataclass
     class MockTurnContext:
@@ -416,7 +449,7 @@ async def test_headroom_turn_hook_and_streaming_middleware() -> None:
     assert swapped_resp["content"][0]["text"] == "def divide(a, b):\n    return a / b\n"
     assert metrics.frontier_accepted_count == 1
 
-    # 2. Test streaming turn (`on_request` stores draft in `draft_store`, ASGI middleware intercepts `<ACCEPT/>` SSE)
+    # 2. Test streaming turn (`on_request` stores draft, ASGI middleware intercepts `<ACCEPT/>`)
     app = FastAPI()
     app.add_middleware(
         ThetaCodeStreamingResponseMiddleware,
@@ -425,7 +458,6 @@ async def test_headroom_turn_hook_and_streaming_middleware() -> None:
         draft_store=draft_store,
     )
 
-    @app.post("/v1/messages")
     async def mock_headroom_streaming_route(request: Request) -> StreamingResponse:
         ledger = request.scope.get("state", {}).get("headroom_savings_attribution", [])
         stream_ctx = MockTurnContext(
@@ -441,18 +473,35 @@ async def test_headroom_turn_hook_and_streaming_middleware() -> None:
         )
         hook.on_request(stream_ctx)
 
-        async def _sse_gen():
+        async def _sse_gen() -> AsyncIterator[bytes]:
             for chunk in [
-                b'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_s1","model":"claude-sonnet-4-5"}}\n\n',
-                b'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
-                b'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"<ACCEPT/>"}}\n\n',
+                (
+                    b"event: message_start\ndata: "
+                    b'{"type":"message_start","message":{"id":"msg_s1","model":"claude-sonnet-4-5"}}\n\n'
+                ),
+                (
+                    b"event: content_block_start\ndata: "
+                    b'{"type":"content_block_start","index":0,'
+                    b'"content_block":{"type":"text","text":""}}\n\n'
+                ),
+                (
+                    b"event: content_block_delta\ndata: "
+                    b'{"type":"content_block_delta","index":0,'
+                    b'"delta":{"type":"text_delta","text":"<ACCEPT/>"}}\n\n'
+                ),
                 b'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
-                b'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}\n\n',
+                (
+                    b"event: message_delta\ndata: "
+                    b'{"type":"message_delta","delta":{"stop_reason":"end_turn"},'
+                    b'"usage":{"output_tokens":3}}\n\n'
+                ),
                 b'event: message_stop\ndata: {"type":"message_stop"}\n\n',
             ]:
                 yield chunk
 
         return StreamingResponse(_sse_gen(), media_type="text/event-stream")
+
+    app.post("/v1/messages")(mock_headroom_streaming_route)
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://headroom.local"
@@ -463,4 +512,3 @@ async def test_headroom_turn_hook_and_streaming_middleware() -> None:
         assert "def divide(a, b):" in text_body
         assert "<ACCEPT/>" not in text_body
         assert metrics.frontier_accepted_count == 2
-

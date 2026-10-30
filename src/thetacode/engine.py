@@ -34,7 +34,7 @@ class DraftResult:
         return bool(self.text.strip() or self.tool_calls) and not self.skipped and not self.error
 
     def format_for_verification(self) -> str:
-        """Render the draft (text and/or tool calls) into a structured block for the frontier verifier."""
+        """Render the draft (text and/or tool calls) into a structured verification block."""
         parts: list[str] = []
         if self.text.strip():
             parts.append(self.text.strip())
@@ -345,7 +345,8 @@ def build_verification_injection(draft: DraftResult, config: SpeculativeConfig) 
         f"INSTRUCTION: A local draft model proposed the response inside <speculative_draft>. "
         f"If the draft is complete, accurate, and directly satisfies the request (including any "
         f"tool call names and arguments), output ONLY `{config.accept_token}` and nothing else. "
-        f"If it needs any changes, ignore `{config.accept_token}` and output your full response or tool calls normally."
+        f"If it needs any changes, ignore `{config.accept_token}` and output your full response "
+        f"or tool calls normally."
     )
 
 
@@ -381,8 +382,7 @@ def inject_draft_into_body(
             "type": "content",
             "content": draft.text,
         }
-        # Predicted Outputs on OpenAI do not support tool definitions simultaneously in some models;
-        # only attach prediction when drafting text content, or also inject context if tools are present.
+        # Predicted Outputs on OpenAI apply when drafting text content without tool calls.
         return updated, "openai_prediction"
 
     # Mode 2: `<ACCEPT/>` verification or advisory context appended to final user turn
@@ -401,8 +401,7 @@ def inject_draft_into_body(
             msg["content"] = content + injection_text
             break
         elif isinstance(content, list):
-            # Append as a new text block or append to the last text block
-            # Watch out for cache_control on the last block: insert text before or preserve cache_control
+            # Append as a new text block at the end of the final user turn
             content.append({"type": "text", "text": injection_text})
             break
 
@@ -420,9 +419,7 @@ def response_accepted_draft(
     if cleaned == config.accept_token:
         return True
     # Also accept if the model echoed `<ACCEPT/>` with minor surrounding whitespace/punctuation
-    if cleaned.startswith(config.accept_token) and len(cleaned) <= len(config.accept_token) + 8:
-        return True
-    return False
+    return cleaned.startswith(config.accept_token) and len(cleaned) <= len(config.accept_token) + 8
 
 
 def build_anthropic_response_from_draft(
@@ -459,7 +456,7 @@ def build_openai_response_from_draft(
     original_response: dict[str, Any],
     draft: DraftResult,
 ) -> dict[str, Any]:
-    """Replace an `<ACCEPT/>` OpenAI Chat Completion JSON with the full drafted content/tool_calls."""
+    """Replace an `<ACCEPT/>` OpenAI Chat Completion JSON with the drafted content/tool_calls."""
     replaced = copy.deepcopy(original_response)
     choices = replaced.get("choices") or [{}]
     first_choice = choices[0] if choices else {}

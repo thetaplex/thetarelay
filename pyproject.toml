@@ -1,38 +1,95 @@
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
 [project]
 name = "thetacode"
 version = "0.1.0"
-description = "Speculative local-to-frontier drafting proxy & Headroom extension for coding agents (Pi, OpenCode, Cursor, Claude Code)"
+description = "Local-to-Frontier Speculative Drafting Proxy & Headroom Extension for Coding Agents (Pi, OpenCode, Cursor, Claude Code)"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "ThetaPlex", email = "support@thetaplex.com" }]
 requires-python = ">=3.11"
-dependencies = [
-    "fastapi>=0.110.0",
-    "uvicorn>=0.27.0",
-    "httpx>=0.27.0",
-    "pydantic>=2.6.0",
+keywords = [
+    "speculative-decoding",
+    "coding-agent",
+    "headroom",
+    "claude-code",
+    "opencode",
+    "ollama",
+    "proxy",
+    "llm",
 ]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "httpx>=0.25.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/thetaplex/thetacode"
+Repository = "https://github.com/thetaplex/thetacode"
+Issues = "https://github.com/thetaplex/thetacode/issues"
+Changelog = "https://github.com/thetaplex/thetacode/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 headroom = [
     "headroom-ai>=0.30.0",
 ]
+
+[dependency-groups]
 dev = [
-    "pytest>=8.0.0",
+    "mypy>=1.16",
+    "pytest>=8.4",
     "pytest-asyncio>=0.23.0",
+    "ruff>=0.12",
 ]
 
 [project.scripts]
 thetacode = "thetacode.cli:main"
 
+# Native plugin registration for `headroom proxy --proxy-extension thetacode`
 [project.entry-points."headroom.proxy_extension"]
 thetacode = "thetacode.headroom_ext:install"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/thetacode"]
 
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PT", "PTH", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.mypy]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["headroom.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = ["-ra", "--strict-markers", "--strict-config"]
 testpaths = ["tests"]
+xfail_strict = true

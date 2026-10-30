@@ -20,12 +20,10 @@ from .engine import (
     SpeculativeMetrics,
     build_anthropic_response_from_draft,
     build_openai_response_from_draft,
-    call_local_drafter,
     extract_text_from_content,
     inject_draft_into_body,
     response_accepted_draft,
 )
-from .streaming import intercept_anthropic_sse_stream, intercept_openai_sse_stream
 
 logger = logging.getLogger("thetacode.headroom_ext")
 
@@ -91,9 +89,7 @@ class ThetaCodeTurnHook:
         self.metrics.drafts_succeeded += 1
         self.metrics.local_draft_latency_ms_sum += draft.latency_ms
 
-        updated_body, active_mode = inject_draft_into_body(
-            body_view, provider, draft, self.config
-        )
+        updated_body, active_mode = inject_draft_into_body(body_view, provider, draft, self.config)
         if active_mode == "openai_prediction":
             self.metrics.openai_prediction_injected_count += 1
 
@@ -117,9 +113,7 @@ class ThetaCodeTurnHook:
             except ImportError:
                 pass
 
-    def _call_local_drafter_sync(
-        self, body: dict[str, Any], provider: str
-    ) -> DraftResult:
+    def _call_local_drafter_sync(self, body: dict[str, Any], provider: str) -> DraftResult:
         """Synchronous counterpart to `call_local_drafter` for Headroom's sync `on_request` hook."""
         import time
         import uuid
@@ -146,9 +140,7 @@ class ThetaCodeTurnHook:
                 resp = client.post(url, json=payload, headers=req_headers)
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             if resp.status_code != 200:
-                return DraftResult(
-                    latency_ms=elapsed_ms, error=f"http_{resp.status_code}"
-                )
+                return DraftResult(latency_ms=elapsed_ms, error=f"http_{resp.status_code}")
             data = resp.json()
             choices = data.get("choices") or []
             if not choices:
@@ -164,9 +156,7 @@ class ThetaCodeTurnHook:
                 fn = tc.get("function") or {}
                 args_raw = fn.get("arguments", "{}")
                 try:
-                    args_parsed = (
-                        json.loads(args_raw) if isinstance(args_raw, str) else args_raw
-                    )
+                    args_parsed = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
                 except json.JSONDecodeError:
                     args_parsed = {"raw": args_raw}
                 normalized_tools.append(
@@ -208,9 +198,7 @@ class ThetaCodeTurnHook:
             if response_accepted_draft(resp_text, self.config):
                 self.metrics.frontier_accepted_count += 1
                 saved_tok = max(0, draft.draft_tokens_est - 2)
-                saved_usd = (
-                    saved_tok / 1_000_000.0
-                ) * self.config.estimated_output_usd_per_million
+                saved_usd = (saved_tok / 1_000_000.0) * self.config.estimated_output_usd_per_million
                 self.metrics.estimated_output_tokens_saved += saved_tok
                 self.metrics.estimated_usd_saved += saved_usd
                 if hasattr(ctx, "record_savings"):
@@ -295,7 +283,13 @@ class ThetaCodeStreamingResponseMiddleware:
         accept_token = self.config.accept_token
 
         async def wrapped_send(message: dict[str, Any]) -> None:
-            nonlocal is_sse, passthrough, accumulated_text, saw_non_text, message_start_event, usage_delta
+            nonlocal \
+                is_sse, \
+                passthrough, \
+                accumulated_text, \
+                saw_non_text, \
+                message_start_event, \
+                usage_delta
 
             draft = self.draft_store.get(id(ledger))
             if draft is None or not draft.has_draft:
@@ -323,7 +317,9 @@ class ThetaCodeStreamingResponseMiddleware:
             chunk: bytes = message.get("body", b"")
             more_body: bool = message.get("more_body", False)
             if chunk:
-                buffered_messages.append({"type": "http.response.body", "body": chunk, "more_body": True})
+                buffered_messages.append(
+                    {"type": "http.response.body", "body": chunk, "more_body": True}
+                )
                 sse_buffer.extend(chunk)
 
                 while b"\n\n" in sse_buffer:
@@ -475,7 +471,6 @@ def install(app: Any, config: Any) -> None:
         logger.warning("headroom.proxy.turn_hooks not found; skipping TurnHook registration")
 
     # 3. Add status endpoint `/thetacode/stats` to Headroom's FastAPI app
-    @app.get("/thetacode/stats")
     async def thetacode_stats() -> dict[str, Any]:
         return {
             "extension": "thetacode",
@@ -487,3 +482,5 @@ def install(app: Any, config: Any) -> None:
             },
             "metrics": metrics.to_dict(),
         }
+
+    app.get("/thetacode/stats")(thetacode_stats)
