@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+from .usecases import DEFAULT_USECASE, get_usecase
+
 
 def _env_bool(name: str, default: bool) -> bool:
     val = os.environ.get(name)
@@ -68,7 +70,11 @@ class SpeculativeConfig:
     # - "context_only": Inject `<speculative_draft>` without `<ACCEPT/>` short-circuiting
     strategy: str = "auto"
 
-    # Selective speculation: only draft on substantive code generation/editing turns
+    # Kind of agent being served. Selects the domain-specific drafting prompts in
+    # `thetarelay.usecases`. Only "coding" exists today; add use cases there for other agents.
+    usecase: str = DEFAULT_USECASE
+
+    # Selective speculation: only draft on substantive turns (long enough prompts)
     selective_speculation: bool = True
     min_prompt_chars_for_draft: int = 15
 
@@ -85,6 +91,10 @@ class SpeculativeConfig:
 
     # Excluded model substrings (e.g., haiku or small fast models that don't need drafting)
     skip_models: tuple[str, ...] = field(default_factory=lambda: ("haiku", "mini", "nano", "flash"))
+
+    def __post_init__(self) -> None:
+        # Fail at startup, not on the first request, if the use case is not known.
+        get_usecase(self.usecase)
 
     @classmethod
     def from_env(cls) -> SpeculativeConfig:
@@ -113,6 +123,7 @@ class SpeculativeConfig:
             local_adaptive_context=_env_bool("THETARELAY_LOCAL_ADAPTIVE_CONTEXT", True),
             local_recent_messages_limit=_env_int("THETARELAY_LOCAL_RECENT_MESSAGES", 10),
             strategy=os.environ.get("THETARELAY_STRATEGY", "auto").strip().lower(),
+            usecase=os.environ.get("THETARELAY_USECASE", DEFAULT_USECASE).strip().lower(),
             selective_speculation=_env_bool("THETARELAY_SELECTIVE", True),
             min_prompt_chars_for_draft=_env_int("THETARELAY_MIN_PROMPT_CHARS", 15),
             enable_headroom_middleware=_env_bool("THETARELAY_HEADROOM_MIDDLEWARE", True),

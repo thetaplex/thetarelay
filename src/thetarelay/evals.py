@@ -1,9 +1,9 @@
-"""Benchmark and evaluation suite for ThetaRelay speculative drafting.
+"""Use-case-agnostic benchmark and evaluation harness for ThetaRelay speculative drafting.
 
 Provides:
-1. Built-in coding agent benchmark scenarios covering code generation, tool use,
-   streaming `<ACCEPT/>` swaps, OpenAI Predicted Outputs, draft rejections (accuracy
-   guardrails), and small-model/short-prompt bypasses.
+1. `EvalScenario` and `EvalSuite`: the scenario format and the per-use-case bundle of built-in
+   scenarios, accuracy check and extra benchmarks. Each use case ships its own suite (see
+   `thetarelay.usecases.<name>.suite`); `get_eval_suite` loads the one for a use case.
 2. Deterministic A/B simulator (`run_ab_benchmark`) comparing Baseline (direct to
    frontier) vs. ThetaRelay Speculative across:
    - Speed: Wall-clock latency, local draft overhead, avoided frontier decode time, speedup
@@ -15,15 +15,15 @@ Provides:
 
 from __future__ import annotations
 
-import ast
 import contextlib
 import copy
+import importlib
 import json
-import re
 import time
+from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 
@@ -36,15 +36,18 @@ from .engine import (
     response_accepted_draft,
 )
 from .proxy import create_app
+from .usecases import get_usecase
 
 
 @dataclass
-class CodingEvalScenario:
-    """A single coding-agent turn scenario for A/B benchmarking and evaluation."""
+class EvalScenario:
+    """A single agent turn scenario for A/B benchmarking and evaluation."""
 
     id: str
     title: str
-    category: str  # "code_edit" | "tool_call" | "openai_prediction" | "rejection_guard" | "bypass"
+    # Generic categories: "rejection_guard" (flawed draft that must be rejected) and "bypass"
+    # (request that must not be drafted). Use cases add their own, e.g. "code_edit".
+    category: str
     provider: str  # "anthropic" | "openai"
     request_body: dict[str, Any]
     # Expected canonical response (what the frontier model would produce on its own)
@@ -64,330 +67,24 @@ class CodingEvalScenario:
     stream: bool = False
 
 
-def get_builtin_scenarios() -> list[CodingEvalScenario]:
-    """Return the standard suite of coding-agent evaluation scenarios."""
-    old_port_code = "def parse_port(val: str) -> int:\n    port = int(val)\n    return port"
-    new_port_code = (
-        "def parse_port(val: str) -> int:\n"
-        "    port = int(val)\n"
-        "    if not (1 <= port <= 65535):\n"
-        '        raise ValueError(f"Invalid port: {port}")\n'
-        "    return port"
-    )
-    pytest_suite_code = (
-        "import pytest\nfrom src.net import parse_port\n\n\n"
-        '@pytest.mark.parametrize("raw,expected", [("1", 1), ("8080", 8080)])\n'
-        "def test_parse_port_valid(raw: str, expected: int) -> None:\n"
-        "    assert parse_port(raw) == expected\n\n\n"
-        '@pytest.mark.parametrize("invalid", ["0", "-5", "65536", "abc", ""])\n'
-        "def test_parse_port_invalid(invalid: str) -> None:\n"
-        "    with pytest.raises(ValueError):\n"
-        "        parse_port(invalid)\n"
-    )
-    return [
-        CodingEvalScenario(
-            id="anth_code_refactor",
-            title="Anthropic: Refactor authentication helper with type hints & docstrings",
-            category="code_edit",
-            provider="anthropic",
-            request_body={
-                "model": "claude-sonnet-4-5",
-                "system": "You are an expert Python coding agent.",
-                "messages": [
-                    {"role": "user", "content": "Read src/auth.py"},
-                    {
-                        "role": "assistant",
-                        "content": (
-                            "Here is src/auth.py:\n"
-                            "def verify_token(tok, secret):\n"
-                            "    return tok == secret\n"
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            "Rewrite verify_token in Python using hmac.compare_digest "
-                            "with full type annotations and handle empty strings safely."
-                        ),
-                    },
-                ],
-                "stream": False,
-            },
-            expected_text=(
-                "import hmac\n\n\n"
-                "def verify_token(token: str, secret: str) -> bool:\n"
-                '    """Constant-time token comparison."""\n'
-                "    if not token or not secret:\n"
-                "        return False\n"
-                "    return hmac.compare_digest(token.encode('utf-8'), secret.encode('utf-8'))\n"
-            ),
-            simulated_draft_text=(
-                "import hmac\n\n\n"
-                "def verify_token(token: str, secret: str) -> bool:\n"
-                '    """Constant-time token comparison."""\n'
-                "    if not token or not secret:\n"
-                "        return False\n"
-                "    return hmac.compare_digest(token.encode('utf-8'), secret.encode('utf-8'))\n"
-            ),
-            draft_is_accurate=True,
-            prompt_cached_tokens=12000,
-            prompt_uncached_tokens=350,
-            expected_output_tokens=185,
-            simulated_local_draft_ms=240.0,
-            simulated_frontier_ttft_ms=400.0,
-        ),
-        CodingEvalScenario(
-            id="anth_tool_edit_file",
-            title="Anthropic: Multi-line edit_file tool call on buggy parser",
-            category="tool_call",
-            provider="anthropic",
-            request_body={
-                "model": "claude-sonnet-4-5",
-                "system": "You are a coding agent with file editing tools.",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": "toolu_read_1",
-                                "content": old_port_code + "\n",
-                            },
-                            {
-                                "type": "text",
-                                "text": (
-                                    "Use edit_file on src/net.py to validate that port is "
-                                    "between 1 and 65535, raising ValueError otherwise."
-                                ),
-                            },
-                        ],
-                    }
-                ],
-                "tools": [
-                    {
-                        "name": "edit_file",
-                        "description": "Replace target text in a file",
-                        "input_schema": {
-                            "type": "object",
-                            "properties": {
-                                "path": {"type": "string"},
-                                "old_str": {"type": "string"},
-                                "new_str": {"type": "string"},
-                            },
-                            "required": ["path", "old_str", "new_str"],
-                        },
-                    }
-                ],
-                "stream": False,
-            },
-            expected_text="I will update `parse_port` in `src/net.py` to validate the port range.",
-            expected_tool_calls=[
-                {
-                    "id": "toolu_edit_1",
-                    "name": "edit_file",
-                    "input": {
-                        "path": "src/net.py",
-                        "old_str": old_port_code,
-                        "new_str": new_port_code,
-                    },
-                }
-            ],
-            simulated_draft_text=(
-                "I will update `parse_port` in `src/net.py` to validate the port range."
-            ),
-            simulated_draft_tool_calls=[
-                {
-                    "id": "toolu_edit_1",
-                    "name": "edit_file",
-                    "input": {
-                        "path": "src/net.py",
-                        "old_str": old_port_code,
-                        "new_str": new_port_code,
-                    },
-                }
-            ],
-            draft_is_accurate=True,
-            prompt_cached_tokens=16000,
-            prompt_uncached_tokens=420,
-            expected_output_tokens=260,
-            simulated_local_draft_ms=290.0,
-            simulated_frontier_ttft_ms=430.0,
-        ),
-        CodingEvalScenario(
-            id="anth_stream_pytest_gen",
-            title="Anthropic SSE Stream: Generate parametrized pytest unit suite",
-            category="code_edit",
-            provider="anthropic",
-            request_body={
-                "model": "claude-sonnet-4-5",
-                "system": "You are a senior Python test engineer.",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": (
-                            "Write a complete pytest suite using @pytest.mark.parametrize "
-                            "for parse_port(val: str) covering valid and invalid ports."
-                        ),
-                    }
-                ],
-                "stream": True,
-            },
-            expected_text=pytest_suite_code,
-            simulated_draft_text=pytest_suite_code,
-            draft_is_accurate=True,
-            prompt_cached_tokens=10000,
-            prompt_uncached_tokens=300,
-            expected_output_tokens=360,
-            simulated_local_draft_ms=320.0,
-            simulated_frontier_ttft_ms=410.0,
-            stream=True,
-        ),
-        CodingEvalScenario(
-            id="openai_predicted_outputs",
-            title="OpenAI GPT-4o: Predicted Outputs (`prediction`) fast file rewrite",
-            category="openai_prediction",
-            provider="openai",
-            request_body={
-                "model": "gpt-4o",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": (
-                            "Add a retry_backoff(attempt: int, base: float = 0.5) -> float "
-                            "helper function with exponential backoff capped at 30.0 seconds."
-                        ),
-                    }
-                ],
-                "stream": False,
-            },
-            expected_text=(
-                "def retry_backoff(attempt: int, base: float = 0.5) -> float:\n"
-                '    """Calculate exponential backoff in seconds, capped at 30.0s."""\n'
-                "    return min(30.0, base * (2 ** max(0, attempt)))\n"
-            ),
-            simulated_draft_text=(
-                "def retry_backoff(attempt: int, base: float = 0.5) -> float:\n"
-                '    """Calculate exponential backoff in seconds, capped at 30.0s."""\n'
-                "    return min(30.0, base * (2 ** max(0, attempt)))\n"
-            ),
-            draft_is_accurate=True,
-            prompt_cached_tokens=6000,
-            prompt_uncached_tokens=250,
-            expected_output_tokens=160,
-            simulated_local_draft_ms=210.0,
-            simulated_frontier_ttft_ms=380.0,
-        ),
-        CodingEvalScenario(
-            id="anth_reject_flawed_draft",
-            title="Anthropic Accuracy Guardrail: Reject flawed local draft with SQL injection",
-            category="rejection_guard",
-            provider="anthropic",
-            request_body={
-                "model": "claude-sonnet-4-5",
-                "system": "You are a security-focused backend engineer.",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": (
-                            "Write a sqlite3 query helper get_user_by_email(conn, email) "
-                            "that safely fetches a user row."
-                        ),
-                    }
-                ],
-                "stream": False,
-            },
-            expected_text=(
-                "def get_user_by_email(conn, email: str):\n"
-                '    sql = "SELECT id, email FROM users WHERE email = ?"\n'
-                "    cursor = conn.execute(sql, (email,))\n"
-                "    return cursor.fetchone()\n"
-            ),
-            # Local model drafts an unsafe f-string query -> Frontier MUST reject and rewrite!
-            simulated_draft_text=(
-                "def get_user_by_email(conn, email: str):\n"
-                "    sql = f\"SELECT id, email FROM users WHERE email = '{email}'\"\n"
-                "    cursor = conn.execute(sql)\n"
-                "    return cursor.fetchone()\n"
-            ),
-            draft_is_accurate=False,
-            prompt_cached_tokens=9000,
-            prompt_uncached_tokens=280,
-            expected_output_tokens=140,
-            simulated_local_draft_ms=230.0,
-            simulated_frontier_ttft_ms=420.0,
-        ),
-        CodingEvalScenario(
-            id="anth_skip_small_model",
-            title="Bypass Filter: Skip local drafting on fast Haiku subagent call",
-            category="bypass",
-            provider="anthropic",
-            request_body={
-                "model": "claude-3-5-haiku-latest",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": "Summarize the git commit message in one line.",
-                    }
-                ],
-                "stream": False,
-            },
-            expected_text="fix(net): validate port bounds in parse_port",
-            simulated_draft_text="",
-            draft_is_accurate=False,
-            prompt_cached_tokens=2000,
-            prompt_uncached_tokens=120,
-            expected_output_tokens=25,
-            simulated_local_draft_ms=0.0,
-            simulated_frontier_ttft_ms=180.0,
-        ),
-    ]
+# Compares a response with the expected one. Returns (passed, details). `details` must contain
+# the booleans `text_matches` and `tools_match`; every other boolean entry is a validity check on
+# the output itself (e.g. `ast_valid` for code) that must hold for a live draft to count as valid.
+AccuracyCheck = Callable[..., tuple[bool, dict[str, Any]]]
+
+_MATCH_KEYS = frozenset({"text_matches", "tools_match"})
 
 
-def _extract_python_code_blocks(text: str) -> str:
-    """Extract Python code from markdown ```python ... ``` fences if present."""
-    stripped = text.strip()
-    fence_matches: list[str] = re.findall(
-        r"```(?:python|py)?\s*\n(.*?)```", stripped, flags=re.DOTALL
-    )
-    if fence_matches:
-        joined = "\n\n".join(m.strip() for m in fence_matches)
-        with contextlib.suppress(SyntaxError):
-            ast.parse(joined)
-            return joined
-        # When a model critiques a snippet in one fence and provides the complete function
-        # in a later fence, prefer the last syntactically valid block containing `def `.
-        for block in reversed(fence_matches):
-            candidate = block.strip()
-            with contextlib.suppress(SyntaxError):
-                ast.parse(candidate)
-                if "def " in candidate:
-                    return candidate
-        for block in reversed(fence_matches):
-            candidate = block.strip()
-            with contextlib.suppress(SyntaxError):
-                ast.parse(candidate)
-                return candidate
-        return fence_matches[-1].strip()
-    return stripped
-
-
-def verify_code_and_tool_accuracy(
+def verify_text_and_tool_accuracy(
     *,
     actual_text: str,
     actual_tool_calls: list[dict[str, Any]],
     expected_text: str,
     expected_tool_calls: list[dict[str, Any]],
 ) -> tuple[bool, dict[str, Any]]:
-    """Verify whether the proxy's returned response matches the expected frontier quality.
-
-    Checks:
-    1. Exact or normalized text match.
-    2. Python AST syntax validity if Python code blocks/defs are present.
-    3. Tool call name and JSON argument equivalence.
-    """
+    """Generic accuracy check: exact text match and tool call name/argument equivalence."""
     text_matches = actual_text.strip() == expected_text.strip()
-
-    # Check tool calls ignoring random tool_use IDs
+    # Compare tool calls ignoring random tool_use IDs
     norm_actual_tools = [
         {"name": tc.get("name"), "input": tc.get("input")} for tc in actual_tool_calls
     ]
@@ -395,22 +92,46 @@ def verify_code_and_tool_accuracy(
         {"name": tc.get("name"), "input": tc.get("input")} for tc in expected_tool_calls
     ]
     tools_match = norm_actual_tools == norm_expected_tools
+    return text_matches and tools_match, {"text_matches": text_matches, "tools_match": tools_match}
 
-    # Check if Python code in actual_text (or inside ```python fences) parses cleanly as valid AST
-    ast_valid = True
-    candidate_code = _extract_python_code_blocks(actual_text)
-    if candidate_code.startswith(("def ", "import ", "from ", "@pytest", "class ")):
-        try:
-            ast.parse(candidate_code)
-        except SyntaxError:
-            ast_valid = False
 
-    passed = text_matches and tools_match and ast_valid
-    return passed, {
-        "text_matches": text_matches,
-        "tools_match": tools_match,
-        "ast_valid": ast_valid,
-    }
+def _validity_checks(details: dict[str, Any]) -> dict[str, bool]:
+    """Return the use-case validity checks (all boolean details except the match keys)."""
+    return {k: v for k, v in details.items() if k not in _MATCH_KEYS and isinstance(v, bool)}
+
+
+class ExtraBenchmark(Protocol):
+    """A use-case-specific benchmark run by `thetarelay eval --benchmark <name>`."""
+
+    def __call__(
+        self,
+        config: SpeculativeConfig,
+        *,
+        dataset: Path | None,
+        limit: int | None,
+        target_model: str | None,
+        target_base_url: str | None,
+    ) -> Coroutine[Any, Any, dict[str, Any]]: ...
+
+
+@dataclass(frozen=True)
+class EvalSuite:
+    """Everything `bench` and `eval` need for one use case."""
+
+    usecase: str
+    builtin_scenarios: Callable[[], list[EvalScenario]]
+    verify_accuracy: AccuracyCheck = verify_text_and_tool_accuracy
+    # Category given to JSONL scenarios that do not set one
+    default_category: str = "general"
+    # Extra `eval --benchmark` suites besides the generic "scenarios" one
+    extra_benchmarks: Mapping[str, ExtraBenchmark] = field(default_factory=dict)
+
+
+def get_eval_suite(usecase: str) -> EvalSuite:
+    """Load the evaluation suite of a use case. Raise `ValueError` if the use case is not known."""
+    module = importlib.import_module(get_usecase(usecase).eval_suite)
+    suite: EvalSuite = module.SUITE
+    return suite
 
 
 @dataclass
@@ -565,12 +286,15 @@ class BenchmarkSuiteReport:
 
 async def run_ab_benchmark(
     config: SpeculativeConfig | None = None,
-    scenarios: list[CodingEvalScenario] | None = None,
+    scenarios: list[EvalScenario] | None = None,
+    eval_suite: EvalSuite | None = None,
 ) -> BenchmarkSuiteReport:
     """Execute the deterministic A/B benchmark suite through the real ThetaRelay proxy pipeline.
 
     Uses `httpx.MockTransport` (never hits live external APIs) while exercising the actual
     FastAPI routes, context converter, prefix-cache-safe injector, and SSE stream interceptor.
+    `eval_suite` defaults to the suite of `config.usecase`; it supplies the built-in scenarios
+    (when `scenarios` is not given) and the accuracy check.
     """
     cfg = copy.deepcopy(config or SpeculativeConfig())
     cfg.local_base_url = "http://bench-local.test/v1"
@@ -578,10 +302,11 @@ async def run_ab_benchmark(
     cfg.openai_upstream_url = "http://bench-openai.test"
     cfg.enable_headroom_middleware = False
 
-    suite = scenarios or get_builtin_scenarios()
+    es = eval_suite or get_eval_suite(cfg.usecase)
+    suite = scenarios or es.builtin_scenarios()
     app = create_app(cfg)
 
-    active_scenario: CodingEvalScenario | None = None
+    active_scenario: EvalScenario | None = None
     captured_frontier_body: dict[str, Any] = {}
 
     async def mock_transport_handler(request: httpx.Request) -> httpx.Response:
@@ -860,7 +585,7 @@ async def run_ab_benchmark(
                 base_in_cost + (in_tok_overhead * input_price) + (spec_out_tokens * output_price)
             )
 
-            acc_ok, acc_details = verify_code_and_tool_accuracy(
+            acc_ok, acc_details = es.verify_accuracy(
                 actual_text=actual_text,
                 actual_tool_calls=actual_tools,
                 expected_text=sc.expected_text,
@@ -997,19 +722,25 @@ def format_benchmark_report_table(report: BenchmarkSuiteReport) -> str:
     return "\n".join(lines)
 
 
-def load_eval_scenarios_from_jsonl(path: Path) -> list[CodingEvalScenario]:
-    """Load custom evaluation scenarios from a JSONL file."""
-    scenarios: list[CodingEvalScenario] = []
+def load_eval_scenarios_from_jsonl(
+    path: Path, default_category: str = "general"
+) -> list[EvalScenario]:
+    """Load custom evaluation scenarios from a JSONL file.
+
+    `default_category` is used for lines without a `category`; pass the suite's
+    `EvalSuite.default_category`.
+    """
+    scenarios: list[EvalScenario] = []
     for idx, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw_line.strip()
         if not line:
             continue
         item = json.loads(line)
         scenarios.append(
-            CodingEvalScenario(
+            EvalScenario(
                 id=str(item.get("id") or f"custom_{idx}"),
                 title=str(item.get("title") or f"Custom Scenario {idx}"),
-                category=str(item.get("category") or "code_edit"),
+                category=str(item.get("category") or default_category),
                 provider=str(item.get("provider") or "anthropic"),
                 request_body=dict(item["request_body"]),
                 expected_text=str(item.get("expected_text") or ""),
@@ -1026,7 +757,7 @@ def load_eval_scenarios_from_jsonl(path: Path) -> list[CodingEvalScenario]:
     return scenarios
 
 
-async def _warmup_openai_model(
+async def warmup_openai_model(
     client: httpx.AsyncClient,
     base_url: str,
     model: str,
@@ -1055,12 +786,16 @@ async def _warmup_openai_model(
 
 async def run_live_eval(
     config: SpeculativeConfig | None = None,
-    scenarios: list[CodingEvalScenario] | None = None,
+    scenarios: list[EvalScenario] | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
     target_model: str | None = None,
     target_base_url: str | None = None,
+    eval_suite: EvalSuite | None = None,
 ) -> dict[str, Any]:
-    """Evaluate a live local drafter endpoint (e.g., Ollama / MLX / vLLM) on coding scenarios.
+    """Evaluate a live local drafter endpoint (e.g., Ollama / MLX / vLLM) on a use case's scenarios.
+
+    `eval_suite` defaults to the suite of `config.usecase`; it supplies the built-in scenarios
+    (when `scenarios` is not given) and the accuracy check.
 
     Supports two-phase batched execution when `target_model` is provided so that single-GPU
     servers (like Ollama on macOS) never thrash weights between turns:
@@ -1069,7 +804,8 @@ async def run_live_eval(
       back-to-back (0 model swaps) to measure real wall-clock speedup and acceptance rate!
     """
     cfg = config or SpeculativeConfig.from_env()
-    suite = [s for s in (scenarios or get_builtin_scenarios()) if s.category != "bypass"]
+    es = eval_suite or get_eval_suite(cfg.usecase)
+    suite = [s for s in (scenarios or es.builtin_scenarios()) if s.category != "bypass"]
 
     results: list[dict[str, Any]] = []
     draft_objects: dict[str, DraftResult] = {}
@@ -1078,7 +814,7 @@ async def run_live_eval(
         # Phase 1: Warm up local drafter model once (if not using MockTransport)
         warmup_draft_ms = 0.0
         if transport is None:
-            warmup_draft_ms = await _warmup_openai_model(
+            warmup_draft_ms = await warmup_openai_model(
                 client,
                 cfg.local_base_url,
                 cfg.local_model,
@@ -1096,6 +832,12 @@ async def run_live_eval(
                     draft_tokens_est=max(1, len(sc.simulated_draft_text) // 4),
                 )
                 draft_objects[sc.id] = flawed_draft
+                _, flawed_details = es.verify_accuracy(
+                    actual_text=sc.simulated_draft_text,
+                    actual_tool_calls=sc.simulated_draft_tool_calls,
+                    expected_text=sc.expected_text,
+                    expected_tool_calls=sc.expected_tool_calls,
+                )
                 results.append(
                     {
                         "scenario_id": sc.id,
@@ -1105,7 +847,7 @@ async def run_live_eval(
                         "mode": "accept_swap",
                         "draft_chars": len(sc.simulated_draft_text),
                         "tool_calls_count": 0,
-                        "ast_valid": True,
+                        **_validity_checks(flawed_details),
                         "tool_schema_valid": True,
                         "exact_match": False,
                         "valid_output": True,
@@ -1163,12 +905,13 @@ async def run_live_eval(
                 _, injected_mode = inject_draft_into_body(
                     sc.request_body, sc.provider, draft_obj, cfg
                 )
-                _, acc_details = verify_code_and_tool_accuracy(
+                _, acc_details = es.verify_accuracy(
                     actual_text=draft_text,
                     actual_tool_calls=parsed_tools,
                     expected_text=sc.expected_text,
                     expected_tool_calls=sc.expected_tool_calls,
                 )
+                validity = _validity_checks(acc_details)
                 has_expected_tool = (
                     bool(parsed_tools)
                     and parsed_tools[0]["name"] == sc.expected_tool_calls[0]["name"]
@@ -1176,7 +919,7 @@ async def run_live_eval(
                     else True
                 )
                 valid_output = bool(draft_text.strip() or parsed_tools) and bool(
-                    acc_details["ast_valid"] and has_expected_tool
+                    all(validity.values()) and has_expected_tool
                 )
                 results.append(
                     {
@@ -1188,7 +931,7 @@ async def run_live_eval(
                         "mode": injected_mode,
                         "draft_chars": len(draft_text),
                         "tool_calls_count": len(parsed_tools),
-                        "ast_valid": acc_details["ast_valid"],
+                        **validity,
                         "tool_schema_valid": has_expected_tool,
                         "exact_match": acc_details["text_matches"] and acc_details["tools_match"],
                         "valid_output": valid_output,
@@ -1217,7 +960,7 @@ async def run_live_eval(
                 or cfg.local_api_key
             )
             t_url_base = (target_base_url or cfg.local_base_url).rstrip("/")
-            warmup_target_ms = await _warmup_openai_model(
+            warmup_target_ms = await warmup_openai_model(
                 client,
                 t_url_base,
                 target_model,

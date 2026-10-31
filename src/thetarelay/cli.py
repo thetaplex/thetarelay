@@ -14,19 +14,29 @@ import uvicorn
 from .config import SpeculativeConfig
 from .evals import (
     format_benchmark_report_table,
+    get_eval_suite,
     load_eval_scenarios_from_jsonl,
     run_ab_benchmark,
     run_live_eval,
 )
-from .humaneval import load_humaneval_from_file, run_humaneval_benchmark
 from .proxy import create_app
+from .usecases import DEFAULT_USECASE, USECASES
+
+
+def _add_usecase_argument(parser: argparse.ArgumentParser, help_text: str) -> None:
+    parser.add_argument(
+        "--usecase",
+        choices=sorted(USECASES),
+        default=None,
+        help=f"{help_text} (default: THETARELAY_USECASE or {DEFAULT_USECASE})",
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="thetarelay",
         description=(
-            "ThetaRelay: Speculative Local-to-Frontier Proxy & Headroom Extension for Coding Agents"
+            "ThetaRelay: Local-to-Frontier Speculative Drafting Proxy & Headroom Extension"
         ),
     )
     subparsers = parser.add_subparsers(dest="command")
@@ -51,6 +61,7 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Speculative verification strategy (default: auto)",
     )
+    _add_usecase_argument(proxy_parser, "Kind of agent served; selects the drafting prompts")
     proxy_parser.add_argument(
         "--anthropic-upstream",
         default=None,
@@ -75,6 +86,7 @@ def main(argv: list[str] | None = None) -> None:
         "bench",
         help="Run the deterministic A/B benchmark suite (speed, efficiency, accuracy)",
     )
+    _add_usecase_argument(bench_parser, "Use case whose built-in scenarios and checks to run")
     bench_parser.add_argument(
         "--json",
         action="store_true",
@@ -96,8 +108,9 @@ def main(argv: list[str] | None = None) -> None:
     # `thetarelay eval`
     eval_parser = subparsers.add_parser(
         "eval",
-        help="Evaluate a live local draft model (Ollama/MLX/vLLM) on coding agent tasks",
+        help="Evaluate a live local draft model (Ollama/MLX/vLLM) on a use case's tasks",
     )
+    _add_usecase_argument(eval_parser, "Use case whose scenarios and benchmarks to run")
     eval_parser.add_argument(
         "--local-url",
         default=None,
@@ -122,13 +135,22 @@ def main(argv: list[str] | None = None) -> None:
         "--dataset",
         type=Path,
         default=None,
-        help="Optional path to custom scenarios or HumanEval JSONL(.gz) file",
+        help="Optional path to a custom dataset for the selected benchmark",
     )
+    extra_benchmarks = {
+        name: usecase
+        for usecase in sorted(USECASES)
+        for name in get_eval_suite(usecase).extra_benchmarks
+    }
     eval_parser.add_argument(
         "--benchmark",
-        choices=["scenarios", "humaneval"],
+        choices=["scenarios", *sorted(extra_benchmarks)],
         default="scenarios",
-        help="Evaluation benchmark suite to run (default: scenarios)",
+        help=(
+            "Benchmark to run: `scenarios` (any use case) or a use-case benchmark "
+            + ", ".join(f"`{b}` ({u})" for b, u in sorted(extra_benchmarks.items()))
+            + " (default: scenarios)"
+        ),
     )
     eval_parser.add_argument(
         "--limit",
@@ -157,6 +179,8 @@ def main(argv: list[str] | None = None) -> None:
         cfg.local_model = args.local_model
     if getattr(args, "strategy", None):
         cfg.strategy = args.strategy
+    if getattr(args, "usecase", None):
+        cfg.usecase = args.usecase
     if getattr(args, "anthropic_upstream", None):
         cfg.anthropic_upstream_url = args.anthropic_upstream.rstrip("/")
     if getattr(args, "openai_upstream", None):
@@ -165,10 +189,13 @@ def main(argv: list[str] | None = None) -> None:
         cfg.enable_headroom_middleware = False
 
     if args.command == "bench":
+        eval_suite = get_eval_suite(cfg.usecase)
         scenarios = (
-            load_eval_scenarios_from_jsonl(args.dataset) if getattr(args, "dataset", None) else None
+            load_eval_scenarios_from_jsonl(args.dataset, eval_suite.default_category)
+            if getattr(args, "dataset", None)
+            else None
         )
-        report = asyncio.run(run_ab_benchmark(cfg, scenarios=scenarios))
+        report = asyncio.run(run_ab_benchmark(cfg, scenarios=scenarios, eval_suite=eval_suite))
         if getattr(args, "json", False):
             print(json.dumps(report.to_dict(), indent=2))
         else:
@@ -176,24 +203,30 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "eval":
-        if getattr(args, "benchmark", "scenarios") == "humaneval":
-            he_problems = (
-                load_humaneval_from_file(args.dataset) if getattr(args, "dataset", None) else None
-            )
-            he_report = asyncio.run(
-                run_humaneval_benchmark(
+        eval_suite = get_eval_suite(cfg.usecase)
+        benchmark = getattr(args, "benchmark", "scenarios")
+        if benchmark != "scenarios":
+            run_extra = eval_suite.extra_benchmarks.get(benchmark)
+            if run_extra is None:
+                eval_parser.error(
+                    f"benchmark {benchmark!r} is not available for use case {cfg.usecase!r}"
+                )
+            extra_report = asyncio.run(
+                run_extra(
                     cfg,
-                    problems=he_problems,
+                    dataset=getattr(args, "dataset", None),
                     limit=getattr(args, "limit", None),
                     target_model=getattr(args, "target_model", None),
                     target_base_url=getattr(args, "target_url", None),
                 )
             )
-            print(json.dumps(he_report, indent=2))
+            print(json.dumps(extra_report, indent=2))
             return
 
         scenarios = (
-            load_eval_scenarios_from_jsonl(args.dataset) if getattr(args, "dataset", None) else None
+            load_eval_scenarios_from_jsonl(args.dataset, eval_suite.default_category)
+            if getattr(args, "dataset", None)
+            else None
         )
         eval_report = asyncio.run(
             run_live_eval(
@@ -201,6 +234,7 @@ def main(argv: list[str] | None = None) -> None:
                 scenarios=scenarios,
                 target_model=getattr(args, "target_model", None),
                 target_base_url=getattr(args, "target_url", None),
+                eval_suite=eval_suite,
             )
         )
         print(json.dumps(eval_report, indent=2))
@@ -221,6 +255,7 @@ def main(argv: list[str] | None = None) -> None:
 ║  Local Drafter:    {cfg.local_model:<49} ║
 ║  Local Endpoint:   {cfg.local_base_url:<49} ║
 ║  Strategy:         {cfg.strategy:<49} ║
+║  Use Case:         {cfg.usecase:<49} ║
 ║  Headroom In-Proc: {"ENABLED" if cfg.enable_headroom_middleware else "DISABLED":<49} ║
 ╠══════════════════════════════════════════════════════════════════════╣
 ║  UPSTREAM TARGETS:                                                   ║

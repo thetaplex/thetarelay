@@ -23,6 +23,7 @@ from thetarelay.engine import (
 from thetarelay.headroom_ext import ThetaRelayStreamingResponseMiddleware, ThetaRelayTurnHook
 from thetarelay.proxy import create_app
 from thetarelay.streaming import intercept_anthropic_sse_stream
+from thetarelay.usecases import DEFAULT_USECASE, USECASES
 
 
 def test_should_speculate_filters_small_models_and_short_prompts() -> None:
@@ -114,6 +115,32 @@ def test_convert_to_openai_draft_payload_preserves_tools_and_trims_context() -> 
     # headroom_retrieve is excluded from local draft tools, edit_file is kept
     assert len(draft_payload["tools"]) == 1
     assert draft_payload["tools"][0]["function"]["name"] == "edit_file"
+
+
+def test_usecase_defaults_to_coding_and_selects_drafting_instructions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = SpeculativeConfig()
+    assert cfg.usecase == DEFAULT_USECASE == "coding"
+
+    body = {"messages": [{"role": "user", "content": "Write a function that adds two ints"}]}
+    payload = convert_to_openai_draft_payload(body, "openai", cfg)
+    assert payload["messages"][0] == {
+        "role": "system",
+        "content": USECASES["coding"].text_drafting_instructions,
+    }
+
+    tool_body = {**body, "tools": [{"type": "function", "function": {"name": "edit_file"}}]}
+    payload = convert_to_openai_draft_payload(tool_body, "openai", cfg)
+    assert payload["messages"][0]["content"] == USECASES["coding"].tool_drafting_instructions
+
+    monkeypatch.setenv("THETARELAY_USECASE", " Coding ")
+    assert SpeculativeConfig.from_env().usecase == "coding"
+
+
+def test_unknown_usecase_fails_at_config_time() -> None:
+    with pytest.raises(ValueError, match="Unknown use case 'legal'"):
+        SpeculativeConfig(usecase="legal")
 
 
 @pytest.mark.parametrize(

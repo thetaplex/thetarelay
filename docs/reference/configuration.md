@@ -29,7 +29,7 @@ not show an error. See [Known limitations](known-limitations.md).
 | `THETARELAY_LOCAL_MAX_TOKENS` | `384` | Maximum draft length, in tokens. |
 | `THETARELAY_LOCAL_TEMPERATURE` | `0.0` | Sampling temperature of the draft. |
 | `THETARELAY_LOCAL_DISABLE_THINKING` | `true` | Sends `reasoning_effort: "none"` to the local API. |
-| `THETARELAY_LOCAL_CONCISE_DRAFT` | `true` | Adds a system message to the local request: write code only, with no explanation. |
+| `THETARELAY_LOCAL_CONCISE_DRAFT` | `true` | Adds a system message to the local request with the drafting instructions of `THETARELAY_USECASE`. For `coding`: write code only, with no explanation. |
 | `THETARELAY_LOCAL_MAX_CONTEXT_CHARS` | `64000` | Maximum characters of conversation sent to the local model. The system prompt gets one third of this value. With `THETARELAY_LOCAL_ADAPTIVE_CONTEXT=true`, this is an upper limit only. Otherwise, the start of the window moves in steps of half this value; use approximately `8000` in that case. |
 | `THETARELAY_LOCAL_ADAPTIVE_CONTEXT` | `true` | Sizes the local context for each conversation. The window keeps its start and grows while the new text can be read within `THETARELAY_LOCAL_TIMEOUT`. If the new text is too large, the window restarts from the newest messages that can be read in time. thetarelay measures the read speed of the local server on each draft. Applies to `thetarelay proxy` and the Headroom extension, not to `eval` or `bench`. |
 | `THETARELAY_LOCAL_RECENT_MESSAGES` | `10` | Maximum number of recent messages sent to the local model when `THETARELAY_LOCAL_ADAPTIVE_CONTEXT=false`. The start of the window moves in steps of half this value, so the local model gets between 6 and 10 messages. |
@@ -39,6 +39,7 @@ not show an error. See [Known limitations](known-limitations.md).
 | Variable | Default | Description |
 |---|---|---|
 | `THETARELAY_STRATEGY` | `auto` | `auto`, `accept_swap`, `prediction` or `context_only`. See [How speculative drafting works](../explanation/how-speculative-drafting-works.md). |
+| `THETARELAY_USECASE` | `coding` | Kind of agent that thetarelay serves. Selects the drafting instructions sent to the local model. Only `coding` is available. If the value is not known, thetarelay stops with an error when it starts. |
 | `THETARELAY_SELECTIVE` | `true` | If true, thetarelay does not draft on short prompts. |
 | `THETARELAY_MIN_PROMPT_CHARS` | `15` | Minimum length of the last message for a draft, in characters. |
 | `THETARELAY_SKIP_MODELS` | `haiku,mini,nano,flash` | Comma-separated words. thetarelay does not draft if the model name contains one of them. |

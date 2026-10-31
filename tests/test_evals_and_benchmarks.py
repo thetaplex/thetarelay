@@ -10,20 +10,44 @@ import pytest
 
 from thetarelay.config import SpeculativeConfig
 from thetarelay.evals import (
+    EvalSuite,
     format_benchmark_report_table,
-    get_builtin_scenarios,
+    get_eval_suite,
     load_eval_scenarios_from_jsonl,
     run_ab_benchmark,
     run_live_eval,
-    verify_code_and_tool_accuracy,
 )
-from thetarelay.humaneval import (
+from thetarelay.usecases.coding.humaneval import (
     compute_paired_mcnemar_and_confusion,
     evaluate_humaneval_functional_pass,
     get_builtin_humaneval_problems,
     mutate_python_code_ast,
     run_humaneval_benchmark,
 )
+from thetarelay.usecases.coding.scenarios import (
+    get_builtin_scenarios,
+    verify_code_and_tool_accuracy,
+)
+
+
+def test_coding_suite_is_default_and_bundles_coding_checks() -> None:
+    suite = get_eval_suite(SpeculativeConfig().usecase)
+    assert suite.usecase == "coding"
+    assert suite.builtin_scenarios is get_builtin_scenarios
+    assert suite.verify_accuracy is verify_code_and_tool_accuracy
+    assert "humaneval" in suite.extra_benchmarks
+    with pytest.raises(ValueError, match="Unknown use case"):
+        get_eval_suite("legal")
+
+
+@pytest.mark.asyncio
+async def test_ab_benchmark_uses_the_given_suite() -> None:
+    """A suite with generic checks only: no `ast_valid`, and its own scenarios."""
+    coding = get_eval_suite("coding")
+    generic = EvalSuite(usecase="generic", builtin_scenarios=lambda: coding.builtin_scenarios()[:2])
+    report = await run_ab_benchmark(SpeculativeConfig(), eval_suite=generic)
+    assert len(report.scenarios) == 2
+    assert all("ast_valid" not in r.accuracy_details for r in report.scenarios)
 
 
 @pytest.mark.asyncio
@@ -108,9 +132,11 @@ async def test_run_live_eval_with_mock_transport_and_custom_jsonl(tmp_path: Path
     }
     custom_jsonl.write_text(json.dumps(scenario_item) + "\n", encoding="utf-8")
 
-    loaded = load_eval_scenarios_from_jsonl(custom_jsonl)
+    loaded = load_eval_scenarios_from_jsonl(custom_jsonl, "code_edit")
     assert len(loaded) == 1
     assert loaded[0].id == "custom_fib"
+    assert loaded[0].category == "code_edit"
+    assert load_eval_scenarios_from_jsonl(custom_jsonl)[0].category == "code_edit"
 
     async def mock_local_drafter(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

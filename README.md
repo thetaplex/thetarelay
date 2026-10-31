@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/thetarelay)](https://pypi.org/p/thetarelay)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-ThetaRelay is a proxy for coding agents. A local model writes a draft of each response. The
+ThetaRelay is a speculative drafting proxy. A local model writes a draft of each response. The
 frontier model then checks the draft. If the draft is correct, the frontier model writes only
 `<ACCEPT/>`, and thetarelay returns the draft.
 

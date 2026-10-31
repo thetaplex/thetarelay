@@ -78,7 +78,7 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
 
     app = FastAPI(
         title="ThetaRelay Speculative Proxy",
-        description="Local-to-Frontier Speculative Drafting Proxy for Coding Agents",
+        description="Local-to-Frontier Speculative Drafting Proxy",
         version="0.1.0",
         lifespan=lifespan,
     )

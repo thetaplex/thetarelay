@@ -25,14 +25,15 @@ from typing import Any
 
 import httpx
 
-from .config import SpeculativeConfig
-from .engine import (
+from ...config import SpeculativeConfig
+from ...engine import (
     DraftResult,
     convert_to_openai_draft_payload,
     inject_draft_into_body,
     response_accepted_draft,
 )
-from .evals import _extract_python_code_blocks, _warmup_openai_model
+from ...evals import warmup_openai_model
+from .scenarios import extract_python_code_blocks
 
 _HUMANEVAL_SYS_PROMPT = "You are an expert Python programmer. Complete the requested function."
 
@@ -406,7 +407,7 @@ def _exec_candidate_worker(
 ) -> None:
     """Child process worker that executes candidate code against canonical HumanEval assertions."""
     try:
-        extracted = _extract_python_code_blocks(code_str)
+        extracted = extract_python_code_blocks(code_str)
         # Prepend prompt header if the model output only the body or omitted typing imports
         if f"def {entry_point}" not in extracted:
             full_source = prompt_str + "\n" + extracted
@@ -466,7 +467,7 @@ def mutate_python_code_ast(code_str: str) -> list[tuple[str, str]]:
     that parse cleanly (`ast.parse` succeeds) with a single flipped comparison,
     arithmetic operator, boolean operator, or boundary constant.
     """
-    extracted = _extract_python_code_blocks(code_str)
+    extracted = extract_python_code_blocks(code_str)
     try:
         base_tree = ast.parse(extracted)
     except SyntaxError:
@@ -674,7 +675,7 @@ async def run_humaneval_benchmark(
         # Phase 1: Warm up Local Drafter and generate all HumanEval completions
         warmup_local_ms = 0.0
         if transport is None:
-            warmup_local_ms = await _warmup_openai_model(
+            warmup_local_ms = await warmup_openai_model(
                 client,
                 cfg.local_base_url,
                 cfg.local_model,
@@ -749,7 +750,7 @@ async def run_humaneval_benchmark(
             t_url_base = (target_base_url or cfg.local_base_url).rstrip("/")
             warmup_target_ms = 0.0
             if transport is None:
-                warmup_target_ms = await _warmup_openai_model(
+                warmup_target_ms = await warmup_openai_model(
                     client,
                     t_url_base,
                     target_model,
