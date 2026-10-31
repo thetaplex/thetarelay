@@ -114,8 +114,6 @@ In the agent-trace test, the wall-clock time increased by approximately 129 ms f
 - [Reference: CLI, configuration, HTTP API](docs/README.md#reference)
 - [How speculative drafting works](docs/explanation/how-speculative-drafting-works.md)
 - [Known limitations](docs/reference/known-limitations.md)
-- Paper: [Markdown](paper/PAPER.md), [LaTeX](paper/thetarelay_paper.tex)
-- [Blog post](docs/blog/speculative-drafting-for-coding-agents.md)
 
 ## Links
 

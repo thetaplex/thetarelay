@@ -17,6 +17,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Changed the default of `THETARELAY_LOCAL_TIMEOUT` from `8.0` to `5.0` seconds.
 - The proxy and the Headroom extension size the local context for each conversation (`THETARELAY_LOCAL_ADAPTIVE_CONTEXT`, default `true`). The window grows while the new text can be read within the timeout, and restarts from the newest messages when it cannot. `THETARELAY_LOCAL_MAX_CONTEXT_CHARS` is now an upper limit, with the default changed from `24000` to `64000`. In a 12-turn replay on Ollama with `gemma4:e4b-mlx`, the total draft time decreased from 31.6 s (fixed 8000-character window) to 19.7 s, with no timeouts.
 
+### Removed
+
+- Moved the paper, the blog post and the output-quality evaluation plan to the `research` branch.
+
 ## [0.1.0] - 2026-10-30
 
 First alpha release.

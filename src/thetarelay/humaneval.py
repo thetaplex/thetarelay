@@ -555,7 +555,6 @@ def mutate_python_code_ast(code_str: str) -> list[tuple[str, str]]:
 def compute_paired_mcnemar_and_confusion(task_rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Compute paired McNemar non-inferiority stats and the 2x2 Verifier Confusion Matrix.
 
-    Follows the experimental analysis protocol in `docs/how-to/evaluate-output-quality.md`:
     - McNemar 2x2 table: `both_pass` (a), `baseline_only_pass` (b), `speculative_only_pass` (c),
       `both_fail` (d), exact two-sided binomial p-value, and 95% confidence interval for (c - b)/N.
     - Verifier 2x2 confusion matrix:

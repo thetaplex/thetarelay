@@ -17,7 +17,6 @@ Procedures for one task each.
 - [Connect a coding agent](how-to/connect-coding-agents.md)
 - [Control when and how thetarelay drafts](how-to/control-drafting.md)
 - [Evaluate a local draft model](how-to/evaluate-a-local-model.md)
-- [Evaluate output quality](how-to/evaluate-output-quality.md)
 
 ## Reference
 
@@ -35,10 +34,3 @@ Background and design reasons.
 
 - [How speculative drafting works](explanation/how-speculative-drafting-works.md)
 - [Cost and latency model](explanation/cost-and-latency-model.md)
-
-## Other material
-
-These pages are not part of the Diátaxis set.
-
-- [Blog post](blog/speculative-drafting-for-coding-agents.md)
-- [Paper](../paper/PAPER.md)
