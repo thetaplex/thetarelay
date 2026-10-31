@@ -23,7 +23,7 @@ not show an error. See [Known limitations](known-limitations.md).
 | Variable | Default | Description |
 |---|---|---|
 | `THETARELAY_LOCAL_BASE_URL` | `http://127.0.0.1:11434/v1` | Base URL of an OpenAI-compatible API: Ollama, MLX, llama.cpp or vLLM. |
-| `THETARELAY_LOCAL_MODEL` | `qwen2.5-coder:7b` | Model name sent to the local API. |
+| `THETARELAY_LOCAL_MODEL` | `gemma4:e4b` | Model name sent to the local API. |
 | `THETARELAY_LOCAL_API_KEY` | `local` | Bearer token sent to the local API. |
 | `THETARELAY_LOCAL_TIMEOUT` | `5.0` | Time limit of one draft request, in seconds. |
 | `THETARELAY_LOCAL_MAX_TOKENS` | `384` | Maximum draft length, in tokens. |

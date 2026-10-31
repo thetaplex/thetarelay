@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `docs/reference/tested-models.md`: the frontier and local models that were tested, and which are confirmed.
 - Documentation in `docs/`: tutorial, how-to guides, reference and explanation pages (Diátaxis, ASD-STE100).
 
 ### Changed
@@ -15,11 +16,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Renamed the project from ThetaCode to ThetaRelay: package `thetarelay`, CLI `thetarelay`, environment variables `THETARELAY_*`, stats endpoint `/thetarelay/stats`, Headroom entry point `thetarelay`.
 - The start of the local draft context now moves in steps of half the message limit and half the character budget, not one message per turn. The drafting instructions (`THETARELAY_LOCAL_CONCISE_DRAFT`) are now a separate system message, not an addition to the last user message. Consecutive drafts share a prefix, so the local server can reuse its prompt cache. In a 10-turn replay on Ollama with `gemma4:e4b-mlx`, the mean draft time decreased from 4.2 s to 2.4 s.
 - Python 3.13 or later is now required (was 3.11).
+- Changed the default of `THETARELAY_LOCAL_MODEL` to `gemma4:e4b`, the cross-platform build of the drafter used for the published results.
 - Changed the default of `THETARELAY_LOCAL_TIMEOUT` from `8.0` to `5.0` seconds.
 - The proxy and the Headroom extension size the local context for each conversation (`THETARELAY_LOCAL_ADAPTIVE_CONTEXT`, default `true`). The window grows while the new text can be read within the timeout, and restarts from the newest messages when it cannot. `THETARELAY_LOCAL_MAX_CONTEXT_CHARS` is now an upper limit, with the default changed from `24000` to `64000`. In a 12-turn replay on Ollama with `gemma4:e4b-mlx`, the total draft time decreased from 31.6 s (fixed 8000-character window) to 19.7 s, with no timeouts.
 
 ### Fixed
 
+- `eval --benchmark humaneval` stopped with an error when a local draft exceeded `THETARELAY_LOCAL_TIMEOUT`. A slow draft now counts as no draft, as in the proxy.
 - `eval --benchmark humaneval` sent the local drafting instructions ("output only a code block") to the frontier baseline. The baseline now gets the original request, so the measured savings are not understated.
 - README: the agent-trace results for `claude-opus-4.5` now match the raw data in `benchmarks/results/live_benchmark_results_2026_10_30.json`.
 

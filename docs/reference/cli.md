@@ -20,7 +20,7 @@ Starts the standalone HTTP proxy. The proxy writes a banner to standard error an
 | `--host` | Host name or IP address | `127.0.0.1` | `THETARELAY_HOST` |
 | `--port` | TCP port | `8788` | `THETARELAY_PORT` |
 | `--local-url` | Base URL of the local OpenAI-compatible API | `http://127.0.0.1:11434/v1` | `THETARELAY_LOCAL_BASE_URL` |
-| `--local-model` | Local draft model name | `qwen2.5-coder:7b` | `THETARELAY_LOCAL_MODEL` |
+| `--local-model` | Local draft model name | `gemma4:e4b` | `THETARELAY_LOCAL_MODEL` |
 | `--strategy` | `auto`, `accept_swap`, `prediction`, `context_only` | `auto` | `THETARELAY_STRATEGY` |
 | `--anthropic-upstream` | Base URL of the Anthropic API | `https://api.anthropic.com` | `THETARELAY_ANTHROPIC_UPSTREAM` |
 | `--openai-upstream` | Base URL of the OpenAI API | `https://api.openai.com` | `THETARELAY_OPENAI_UPSTREAM` |

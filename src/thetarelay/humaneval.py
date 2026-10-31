@@ -698,12 +698,16 @@ async def run_humaneval_benchmark(
             }
             payload = convert_to_openai_draft_payload(req_body, "anthropic", cfg)
             t0 = time.perf_counter()
-            resp = await client.post(
-                f"{cfg.local_base_url}/chat/completions",
-                json=payload,
-                headers={"Authorization": f"Bearer {cfg.local_api_key}"},
-                timeout=cfg.local_timeout_seconds,
-            )
+            try:
+                resp = await client.post(
+                    f"{cfg.local_base_url}/chat/completions",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {cfg.local_api_key}"},
+                    timeout=cfg.local_timeout_seconds,
+                )
+            except httpx.TimeoutException:
+                # Same as the proxy: a draft that is too slow counts as no draft.
+                resp = httpx.Response(504)
             draft_ms = (time.perf_counter() - t0) * 1000.0
             if resp.status_code == 200:
                 data = resp.json()

@@ -47,7 +47,7 @@ class SpeculativeConfig:
 
     # Local Draft Model settings (OpenAI-compatible endpoint: Ollama, MLX, llama.cpp, vLLM)
     local_base_url: str = "http://127.0.0.1:11434/v1"
-    local_model: str = "qwen2.5-coder:7b"
+    local_model: str = "gemma4:e4b"
     local_api_key: str = "local"
     local_timeout_seconds: float = 5.0
     local_max_tokens: int = 384
@@ -102,7 +102,7 @@ class SpeculativeConfig:
             local_base_url=os.environ.get(
                 "THETARELAY_LOCAL_BASE_URL", "http://127.0.0.1:11434/v1"
             ).rstrip("/"),
-            local_model=os.environ.get("THETARELAY_LOCAL_MODEL", "qwen2.5-coder:7b"),
+            local_model=os.environ.get("THETARELAY_LOCAL_MODEL", "gemma4:e4b"),
             local_api_key=os.environ.get("THETARELAY_LOCAL_API_KEY", "local"),
             local_timeout_seconds=_env_float("THETARELAY_LOCAL_TIMEOUT", 5.0),
             local_max_tokens=_env_int("THETARELAY_LOCAL_MAX_TOKENS", 384),

@@ -65,7 +65,7 @@ def test_should_speculate_filters_small_models_and_short_prompts() -> None:
 
 
 def test_convert_to_openai_draft_payload_preserves_tools_and_trims_context() -> None:
-    cfg = SpeculativeConfig(local_model="qwen2.5-coder:7b", local_max_context_chars=500)
+    cfg = SpeculativeConfig(local_model="gemma4:e4b", local_max_context_chars=500)
     anthropic_body = {
         "model": "claude-sonnet-4-5",
         "system": [{"type": "text", "text": "You are an expert coding assistant."}],
@@ -109,7 +109,7 @@ def test_convert_to_openai_draft_payload_preserves_tools_and_trims_context() -> 
     }
 
     draft_payload = convert_to_openai_draft_payload(anthropic_body, "anthropic", cfg)
-    assert draft_payload["model"] == "qwen2.5-coder:7b"
+    assert draft_payload["model"] == "gemma4:e4b"
     assert draft_payload["messages"][0]["role"] == "system"
     # headroom_retrieve is excluded from local draft tools, edit_file is kept
     assert len(draft_payload["tools"]) == 1
@@ -296,7 +296,7 @@ async def test_end_to_end_proxy_with_mock_local_and_frontier() -> None:
     """Test the full FastAPI speculative proxy against mocked local drafter + frontier upstream."""
     cfg = SpeculativeConfig(
         local_base_url="http://local-drafter.test/v1",
-        local_model="qwen2.5-coder:7b",
+        local_model="gemma4:e4b",
         anthropic_upstream_url="http://frontier-anthropic.test",
         openai_upstream_url="http://frontier-openai.test",
         enable_headroom_middleware=False,
@@ -452,7 +452,7 @@ async def test_headroom_turn_hook_and_streaming_middleware() -> None:
 
     cfg = SpeculativeConfig(
         local_base_url="http://local-drafter.test/v1",
-        local_model="qwen2.5-coder:7b",
+        local_model="gemma4:e4b",
     )
     metrics = SpeculativeMetrics()
     draft_store: dict[int, DraftResult] = {}

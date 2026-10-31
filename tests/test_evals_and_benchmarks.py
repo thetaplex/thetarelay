@@ -231,6 +231,18 @@ async def test_humaneval_functional_pass_and_guardrail_recovery() -> None:
     assert not any("DRAFTING MODE" in r for r in target_requests)
 
 
+async def test_humaneval_counts_slow_draft_as_no_draft() -> None:
+    def slow_local_drafter(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("draft too slow", request=request)
+
+    report = await run_humaneval_benchmark(
+        SpeculativeConfig(local_base_url="http://he-local.test/v1"),
+        problems=get_builtin_humaneval_problems()[:1],
+        transport=httpx.MockTransport(slow_local_drafter),
+    )
+    assert report["local_pass_at_1_pct"] == 0.0
+
+
 def test_ast_mutation_and_mcnemar_confusion_matrix() -> None:
     """Verify AST mutation produces syntactically valid failing mutants and McNemar stats."""
     p0 = get_builtin_humaneval_problems()[0]

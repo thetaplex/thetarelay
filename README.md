@@ -56,7 +56,7 @@ just setup
 1. Download the default draft model:
 
    ```sh
-   ollama pull qwen2.5-coder:7b
+   ollama pull gemma4:e4b
    ```
 
 2. Start the proxy:
@@ -82,11 +82,11 @@ just setup
 
 | Task | Command |
 |---|---|
-| Start the proxy | `thetarelay proxy --local-model qwen2.5-coder:7b` |
+| Start the proxy | `thetarelay proxy --local-model gemma4:e4b` |
 | Run inside Headroom | `headroom proxy --port 8787 --proxy-extension thetarelay` |
 | Run the offline benchmark | `thetarelay bench` |
-| Evaluate a local model | `thetarelay eval --local-model qwen2.5-coder:7b` |
-| Run HumanEval | `thetarelay eval --benchmark humaneval --local-model qwen2.5-coder:7b` |
+| Evaluate a local model | `thetarelay eval --local-model gemma4:e4b` |
+| Run HumanEval | `thetarelay eval --benchmark humaneval --local-model gemma4:e4b` |
 
 In a source checkout, use `just run` in place of `thetarelay`, for example `just run proxy`.
 
@@ -102,12 +102,20 @@ Frontier models: `anthropic/claude-opus-4.5` (5 USD input / 25 USD output per 10
 | HumanEval, 10 problems | `openai/gpt-5.4` | 9 of 10 | 1339 → 188 (-86.0%) | 0.0235 → 0.0119 (-49.6%) | 25.2 s → 33.2 s | 10 of 10 pass@1 |
 | 15 000-token agent traces with Headroom 0.37.0 | `claude-opus-4.5` | 3 of 3 | 74 → 21 (-71.6%) | 0.2283 → 0.1276 (-44.1%) | 8.1 s → 25.1 s | 3 of 3 valid (direct: 1 of 3) |
 | 13 800-token agent traces with Headroom 0.37.0 | `openai/gpt-5.4` | 3 of 3 | 260 → 24 (-90.8%) | 0.0781 → 0.0119 (-84.8%) | 7.45 s → 19.3 s | 3 of 3 match |
-| Drafts with injected bugs and SQL injection | `claude-opus-4.5` & `gpt-5.4` | 0 of 5 | — | — | — | 5 of 5 recovered |
+| Drafts with injected bugs (HumanEval) and SQL injection | `claude-opus-4.5`, `gpt-5.4`, `qwen3.8:27b-mlx` (local) | 0 of 7 | — | — | — | 6 of 6 HumanEval tasks recovered |
 
 In the agent-trace tests, the wall-clock time increased because the local model read the full
 context on each turn. These results are from before the adaptive draft context
 (`THETARELAY_LOCAL_ADAPTIVE_CONTEXT`).
 `thetarelay bench` uses simulated values. It does not produce these results.
+
+## Tested models
+
+Confirmed frontier models: `anthropic/claude-opus-4.5` and `openai/gpt-5.4`. Confirmed local
+verifier: `qwen3.8:27b-mlx`. All results use the local drafter `gemma4:e4b-mlx`.
+
+Some frontier models accept drafts with bugs. Do not use a frontier model that is not confirmed
+before you test it. See [Tested models](docs/reference/tested-models.md).
 
 ## Documentation
 

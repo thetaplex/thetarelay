@@ -27,6 +27,7 @@ Facts about the interfaces.
 - [HTTP API, headers and metrics](reference/http-api.md)
 - [Dataset formats](reference/dataset-formats.md)
 - [Known limitations](reference/known-limitations.md)
+- [Tested models](reference/tested-models.md)
 
 ## Explanation
 

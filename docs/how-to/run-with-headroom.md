@@ -9,7 +9,7 @@ thetarelay then drafts on the smaller context. Use one of the three modes below.
 | 2. Embedded middleware | One: `thetarelay proxy` | You want one process and one install. |
 | 3. Chained proxies | Two: `headroom proxy` and `thetarelay proxy` | You must keep the two Python environments separate. |
 
-All examples use Ollama at `http://127.0.0.1:11434/v1` with the model `qwen2.5-coder:7b`.
+All examples use Ollama at `http://127.0.0.1:11434/v1` with the model `gemma4:e4b`.
 
 ## Mode 1: Run thetarelay as a Headroom extension
 
@@ -26,7 +26,7 @@ All examples use Ollama at `http://127.0.0.1:11434/v1` with the model `qwen2.5-c
 
    ```sh
    THETARELAY_LOCAL_BASE_URL=http://127.0.0.1:11434/v1 \
-   THETARELAY_LOCAL_MODEL=qwen2.5-coder:7b \
+   THETARELAY_LOCAL_MODEL=gemma4:e4b \
    headroom proxy --port 8787 --proxy-extension thetarelay
    ```
 
@@ -57,7 +57,7 @@ If `headroom-ai` is installed in the same environment, `thetarelay proxy` adds H
    ```sh
    thetarelay proxy --port 8787 \
      --local-url http://127.0.0.1:11434/v1 \
-     --local-model qwen2.5-coder:7b
+     --local-model gemma4:e4b
    ```
 
 3. Make sure that the middleware is active:
@@ -77,7 +77,7 @@ to thetarelay. thetarelay sends it to the provider.
 1. In terminal 1, start thetarelay without the embedded middleware:
 
    ```sh
-   thetarelay proxy --port 8788 --no-headroom-middleware --local-model qwen2.5-coder:7b
+   thetarelay proxy --port 8788 --no-headroom-middleware --local-model gemma4:e4b
    ```
 
    > **CAUTION:** Always use `--no-headroom-middleware` in this mode. If you do not, thetarelay

@@ -54,7 +54,7 @@ information, see [Cost and latency model](../explanation/cost-and-latency-model.
 1. Download the default draft model:
 
    ```sh
-   ollama pull qwen2.5-coder:7b
+   ollama pull gemma4:e4b
    ```
 
 2. Make sure that Ollama runs. Ollama listens on `http://127.0.0.1:11434` by default.
@@ -65,7 +65,7 @@ information, see [Cost and latency model](../explanation/cost-and-latency-model.
 2. Start the proxy:
 
    ```sh
-   just run proxy --local-model qwen2.5-coder:7b
+   just run proxy --local-model gemma4:e4b
    ```
 
 3. Find the banner in the terminal. It shows `Listening: http://127.0.0.1:8788`.

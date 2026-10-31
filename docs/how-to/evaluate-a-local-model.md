@@ -13,7 +13,7 @@ The output is JSON.
 2. Run the evaluation:
 
    ```sh
-   just eval --local-url http://127.0.0.1:11434/v1 --local-model qwen2.5-coder:7b
+   just eval --local-url http://127.0.0.1:11434/v1 --local-model gemma4:e4b
    ```
 
 3. Read these fields:
@@ -31,8 +31,8 @@ The target model must have an OpenAI-compatible Chat Completions endpoint.
 1. Add `--target-model`. If the target uses a different server, add `--target-url` also:
 
    ```sh
-   just eval --local-model qwen2.5-coder:7b \
-     --target-model qwen2.5-coder:32b \
+   just eval --local-model gemma4:e4b \
+     --target-model qwen3.8:27b \
      --target-url http://127.0.0.1:11434/v1
    ```
 
@@ -47,7 +47,7 @@ server that has memory for one model only.
 1. Run the 10 built-in problems:
 
    ```sh
-   just eval --benchmark humaneval --local-model qwen2.5-coder:7b
+   just eval --benchmark humaneval --local-model gemma4:e4b
    ```
 
 2. To run the full HumanEval set, download `HumanEval.jsonl.gz` from
@@ -55,7 +55,7 @@ server that has memory for one model only.
 
    ```sh
    just eval --benchmark humaneval --dataset HumanEval.jsonl.gz --limit 50 \
-     --local-model qwen2.5-coder:7b --target-model qwen2.5-coder:32b
+     --local-model gemma4:e4b --target-model qwen3.8:27b
    ```
 
 3. Read `local_pass_at_1_pct`. With a target model, read `target_comparison` also.
@@ -69,7 +69,7 @@ For a hosted target, set `THETARELAY_TARGET_API_KEY` (or `OPENROUTER_API_KEY` or
 2. Add `--dataset`:
 
    ```sh
-   just eval --dataset my-scenarios.jsonl --local-model qwen2.5-coder:7b
+   just eval --dataset my-scenarios.jsonl --local-model gemma4:e4b
    ```
 
 You can use the same file with `just bench --dataset my-scenarios.jsonl`. The benchmark uses the

@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> None:
     proxy_parser.add_argument(
         "--local-model",
         default=None,
-        help="Local draft model name (default: qwen2.5-coder:7b)",
+        help="Local draft model name (default: gemma4:e4b)",
     )
     proxy_parser.add_argument(
         "--strategy",
@@ -106,12 +106,12 @@ def main(argv: list[str] | None = None) -> None:
     eval_parser.add_argument(
         "--local-model",
         default=None,
-        help="Local draft model name (default: qwen2.5-coder:7b)",
+        help="Local draft model name (default: gemma4:e4b)",
     )
     eval_parser.add_argument(
         "--target-model",
         default=None,
-        help="Optional target model for two-phase verification (e.g. qwen3.8:27b-mlx)",
+        help="Optional target model for two-phase verification (e.g. qwen3.8:27b)",
     )
     eval_parser.add_argument(
         "--target-url",

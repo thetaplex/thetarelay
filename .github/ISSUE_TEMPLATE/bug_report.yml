@@ -36,4 +36,4 @@ body:
     id: target
     attributes:
       label: Local drafter and frontier model
-      placeholder: ollama qwen2.5-coder:7b / claude-sonnet-4-5
+      placeholder: ollama gemma4:e4b / claude-sonnet-4-5
