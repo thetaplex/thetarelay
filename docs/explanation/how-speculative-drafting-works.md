@@ -18,7 +18,7 @@ the draft as the response.
    small models, short prompts, or requests that already contain a draft.
 4. thetarelay converts the request to an OpenAI Chat Completions request for the local model. It
    adds the drafting instructions as a separate system message and sends a maximum of 16 tools.
-   It sends a window of the conversation, not the full conversation (see below).
+   It sizes the conversation window adaptively using the local prompt cache (see below).
 5. The local model returns text, tool calls, or both.
 6. thetarelay adds the draft to the request and sends it to the frontier model.
 7. thetarelay examines the response and returns the draft or the frontier response.
@@ -39,6 +39,24 @@ Anthropic or OpenAI response that contains the draft text and tool calls.
 
 thetarelay accepts small differences. It removes `<think>` blocks of reasoning models. It accepts a
 response that starts with the token and is not much longer than the token.
+
+#### Why `accept_swap` uses all-or-nothing acceptance
+
+In engine-level speculative decoding (such as Medusa or Eagle), the inference engine accepts the
+draft up to the first rejected token (partial acceptance). `accept_swap` operates across black-box
+HTTP APIs and uses binary (all-or-nothing) acceptance:
+
+- **Output token economics:** For speculative drafting to save cost and latency, the frontier
+  verifier must emit only 2 output tokens (`<ACCEPT/>`). If the frontier model had to describe
+  which parts to keep or emit diffs, the added output tokens would eliminate the savings.
+- **API boundaries:** Cloud APIs (Anthropic, OpenRouter) do not expose internal logits or KV-cache
+  states over HTTP.
+- **Verifier reliability:** When models output partial line-level patches, they often make syntax
+  errors or misidentify line numbers. Binary acceptance ensures a 0.0 % False Accept Rate and
+  preserves full accuracy parity.
+
+The OpenAI `prediction` strategy does perform token-level partial acceptance inside OpenAI's
+servers, but bills rejected tokens as output tokens and does not support tool calls.
 
 ### `prediction`
 
@@ -74,21 +92,42 @@ The local model must read its prompt before it can write a draft. On a laptop, t
 approximately 1 second for each 1 300 characters, so a long conversation can use all of
 `THETARELAY_LOCAL_TIMEOUT`.
 
-Local servers such as Ollama also keep a prompt cache. If a request starts with exactly the same
-messages as the previous request, the server reads only the new messages. thetarelay uses this:
+Local servers such as Ollama and MLX keep a prompt cache. If a request starts with exactly the same
+messages as the previous request, the server reads only the new messages. thetarelay uses this
+with an adaptive draft window (`AdaptiveDraftWindow`):
 
-- The window keeps the same first message from turn to turn, and new messages are added at the
-  end. Each draft then costs only the time to read the new text.
-- The drafting instructions are in a system message at the start. If they were added to the last
-  user message, that message would change on the next turn and the cache would stop at it.
-- If the new text cannot be read before the timeout, or the window becomes larger than
-  `THETARELAY_LOCAL_MAX_CONTEXT_CHARS`, the window starts again from the newest messages that the
-  local model can read in time.
-- thetarelay measures the read speed on each draft. A slower model or computer gets a smaller
-  window.
+- **Stable conversation prefix:** The window keeps the same starting message from turn to turn, and
+  appends new messages at the end. Because the prefix matches the previous turn, the local server
+  reads only the newly added tokens.
+- **Separate system prompt:** The drafting instructions are sent as an independent system message at
+  the start. If drafting instructions were appended to the last user message, that message would
+  change on every turn and invalidate the local prompt cache.
+- **Conversation tracking:** thetarelay identifies conversations by the SHA-256 hash of the initial
+  message, tracking up to 64 active conversations in an in-memory LRU cache.
+- **Affordable read budget:** thetarelay allocates 80 % of `THETARELAY_LOCAL_TIMEOUT` to reading new
+  prompt characters, reserving the remaining 20 % for decoding the draft tokens:
+  `affordable_chars = max(500, int(chars_per_second * timeout * 0.8))`.
+- **Dynamic read-speed adaptation:** thetarelay initializes read speed at 1 300 characters per second.
+  On every completed draft that reads at least 1 000 new characters, the speed updates with an
+  exponential moving average: `0.7 * previous + 0.3 * measured`. Slower hardware automatically gets
+  a smaller window budget.
+- **Window growth and restart:** The window keeps its start and grows as long as new characters fit
+  within `affordable_chars` and total characters fit within `THETARELAY_LOCAL_MAX_CONTEXT_CHARS`
+  (ceiling 64 000). If a turn adds more characters than the affordable budget (such as a large file
+  read or diff), or hits the ceiling, the window restarts from the newest messages that fit within
+  `min(affordable_chars, local_max_context_chars // 2)`.
 
-This applies to `thetarelay proxy` and the Headroom extension. `eval` and `bench` use a fixed
-window. To use the fixed window in the proxy, set `THETARELAY_LOCAL_ADAPTIVE_CONTEXT=false`.
+This applies to `thetarelay proxy` and the Headroom extension. `eval` and `bench` evaluate isolated
+tasks and use a fixed window.
+
+### Fixed-window fallback
+
+To disable the adaptive window in the proxy, set `THETARELAY_LOCAL_ADAPTIVE_CONTEXT=false`.
+thetarelay then uses a stepped window (`_stable_window`). Instead of sliding by one message on
+every turn (which invalidates prompt cache on each turn), the window start advances in jumps of
+half the message limit (`THETARELAY_LOCAL_RECENT_MESSAGES // 2`) and half the character limit
+(`THETARELAY_LOCAL_MAX_CONTEXT_CHARS // 2`). When using the fixed window, set
+`THETARELAY_LOCAL_MAX_CONTEXT_CHARS` to approximately `8000`.
 
 ## Streaming
 

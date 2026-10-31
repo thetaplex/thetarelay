@@ -25,13 +25,13 @@ not show an error. See [Known limitations](known-limitations.md).
 | `THETARELAY_LOCAL_BASE_URL` | `http://127.0.0.1:11434/v1` | Base URL of an OpenAI-compatible API: Ollama, MLX, llama.cpp or vLLM. |
 | `THETARELAY_LOCAL_MODEL` | `gemma4:e4b` | Model name sent to the local API. |
 | `THETARELAY_LOCAL_API_KEY` | `local` | Bearer token sent to the local API. |
-| `THETARELAY_LOCAL_TIMEOUT` | `5.0` | Time limit of one draft request, in seconds. |
+| `THETARELAY_LOCAL_TIMEOUT` | `5.0` | Time limit of one draft request, in seconds. With `THETARELAY_LOCAL_ADAPTIVE_CONTEXT=true`, 80 % of this limit is allocated to reading new prompt characters and 20 % to token decoding. |
 | `THETARELAY_LOCAL_MAX_TOKENS` | `384` | Maximum draft length, in tokens. |
 | `THETARELAY_LOCAL_TEMPERATURE` | `0.0` | Sampling temperature of the draft. |
 | `THETARELAY_LOCAL_DISABLE_THINKING` | `true` | Sends `reasoning_effort: "none"` to the local API. |
-| `THETARELAY_LOCAL_CONCISE_DRAFT` | `true` | Adds a system message to the local request with the drafting instructions of `THETARELAY_USECASE`. For `coding`: write code only, with no explanation. |
-| `THETARELAY_LOCAL_MAX_CONTEXT_CHARS` | `64000` | Maximum characters of conversation sent to the local model. The system prompt gets one third of this value. With `THETARELAY_LOCAL_ADAPTIVE_CONTEXT=true`, this is an upper limit only. Otherwise, the start of the window moves in steps of half this value; use approximately `8000` in that case. |
-| `THETARELAY_LOCAL_ADAPTIVE_CONTEXT` | `true` | Sizes the local context for each conversation. The window keeps its start and grows while the new text can be read within `THETARELAY_LOCAL_TIMEOUT`. If the new text is too large, the window restarts from the newest messages that can be read in time. thetarelay measures the read speed of the local server on each draft. Applies to `thetarelay proxy` and the Headroom extension, not to `eval` or `bench`. |
+| `THETARELAY_LOCAL_CONCISE_DRAFT` | `true` | Adds a separate system message to the local request with the drafting instructions of `THETARELAY_USECASE`. Keeping instructions in an independent system message preserves the local server's prompt cache across turns. |
+| `THETARELAY_LOCAL_MAX_CONTEXT_CHARS` | `64000` | Maximum characters of conversation sent to the local model. The system prompt gets up to one third of this value. With `THETARELAY_LOCAL_ADAPTIVE_CONTEXT=true`, this is an upper ceiling. If disabled, the start of the window moves in steps of half this value; use approximately `8000` in that case. |
+| `THETARELAY_LOCAL_ADAPTIVE_CONTEXT` | `true` | Dynamically sizes the local draft window for each conversation. The window keeps its start and grows while new text fits within the read budget of `THETARELAY_LOCAL_TIMEOUT` and total characters fit within `THETARELAY_LOCAL_MAX_CONTEXT_CHARS`. When new text is too large or the ceiling is reached, the window restarts from the newest messages that can be read in time. thetarelay tracks up to 64 active conversations in memory and measures local read speed on each draft. Applies to `thetarelay proxy` and the Headroom extension, not to `eval` or `bench`. |
 | `THETARELAY_LOCAL_RECENT_MESSAGES` | `10` | Maximum number of recent messages sent to the local model when `THETARELAY_LOCAL_ADAPTIVE_CONTEXT=false`. The start of the window moves in steps of half this value, so the local model gets between 6 and 10 messages. |
 
 ## Drafting behaviour

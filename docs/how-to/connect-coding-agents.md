@@ -46,3 +46,17 @@ API.
 
 If `drafts_failed` increases, thetarelay cannot get a draft from the local model. Make sure that the
 local model server runs and that `THETARELAY_LOCAL_MODEL` is correct.
+
+## Multi-turn conversations and adaptive context
+
+Coding agents make multiple turns during one session (for example editing files, running tests,
+and reading tool outputs).
+
+With adaptive context enabled (default):
+
+- On the first turn of a task, the local server reads the initial prompt and system message.
+- On later turns, the adaptive draft window keeps the conversation prefix stable. The local
+  server reuses its prompt cache and reads only the new turn tokens, reducing draft latency.
+- If a tool returns very large output (such as large file diffs or build logs) that cannot be
+  read within `THETARELAY_LOCAL_TIMEOUT`, ThetaRelay restarts the window from the newest messages
+  that fit in time, preventing timeouts.

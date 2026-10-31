@@ -60,7 +60,7 @@ makes thetarelay save less.
 | Model | Result |
 |---|---|
 | `gemma4:e4b-mlx` | Used for all results above (Apple silicon only). 9 of 10 HumanEval drafts passed the tests. Approximately 1.5 s for each HumanEval draft. |
-| `gemma4:e4b` | The default of `THETARELAY_LOCAL_MODEL`. The same model as `gemma4:e4b-mlx` for Linux, Windows and macOS. On an Apple silicon Mac with `qwen3.8:27b-mlx` as verifier: 9 of 10 HumanEval drafts passed the tests and were accepted, approximately 1.2 s for each draft (0.8 s to 4.3 s). |
+| `gemma4:e4b` | The default of `THETARELAY_LOCAL_MODEL`. The same model as `gemma4:e4b-mlx` for Linux, Windows and macOS. On an Apple silicon Mac with `qwen3.8:27b-mlx` as verifier: 9 of 10 HumanEval drafts passed the tests and were accepted, approximately 1.2 s for each draft (0.8 s to 4.3 s). With adaptive drafting in multi-turn sessions, warm prompt cache drafts average 1.6 s, versus ~4 s on cold prefill. |
 | `lfm3` | Not tested. Requires Ollama 0.40.12 or later. |
 
 ## Test a model that is not on this page

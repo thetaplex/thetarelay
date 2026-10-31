@@ -74,3 +74,10 @@ For a hosted target, set `THETARELAY_TARGET_API_KEY` (or `OPENROUTER_API_KEY` or
 
 You can use the same file with `just bench --dataset my-scenarios.jsonl`. The benchmark uses the
 `simulated_draft_*` fields and does not call a model.
+
+## Adaptive context during evaluation
+
+`thetarelay eval` and `thetarelay bench` run independent scenarios and benchmark problems one by
+one. They do not maintain conversation sessions, and use a fixed context window for each turn.
+The dynamic adaptive draft window (`THETARELAY_LOCAL_ADAPTIVE_CONTEXT`) is active in
+`thetarelay proxy` and the Headroom extension for live multi-turn agent sessions.
