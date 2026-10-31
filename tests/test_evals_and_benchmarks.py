@@ -169,10 +169,13 @@ async def test_humaneval_functional_pass_and_guardrail_recovery() -> None:
 
     # 2. Run `run_humaneval_benchmark` with MockTransport
     by_entry = {p.entry_point: p.canonical_solution for p in problems}
+    target_requests: list[str] = []
 
     async def mock_humaneval_handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content.decode("utf-8"))
         last_content = body["messages"][-1]["content"]
+        if body["model"] == "he-target-model":
+            target_requests.append(json.dumps(body["messages"]))
         # If this is a verification turn containing a buggy draft, reject and return canonical
         if "<speculative_draft>" in last_content:
             if "BUG:" in last_content:
@@ -223,6 +226,9 @@ async def test_humaneval_functional_pass_and_guardrail_recovery() -> None:
     assert guard["recovered_pass_at_1"] is True
     assert tc["mcnemar_paired_test"]["delta_accuracy_pct"] == 0.0
     assert tc["verifier_confusion_matrix"]["false_accepts_sycophancy"] == 0
+    # The frontier gets the original request, never the local drafting instructions.
+    assert target_requests
+    assert not any("DRAFTING MODE" in r for r in target_requests)
 
 
 def test_ast_mutation_and_mcnemar_confusion_matrix() -> None:

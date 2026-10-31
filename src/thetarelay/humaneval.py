@@ -756,7 +756,9 @@ async def run_humaneval_benchmark(
             target_cfg = copy.deepcopy(cfg)
             target_cfg.local_model = target_model
             target_cfg.strategy = "accept_swap"
-            target_cfg.local_concise_draft_instructions = True
+            # The frontier gets the original request: no local drafting instructions, so the
+            # baseline answers as it would without thetarelay.
+            target_cfg.local_concise_draft_instructions = False
 
             base_pass_count = 0
             spec_pass_count = 0
@@ -802,7 +804,6 @@ async def run_humaneval_benchmark(
                 # 2b. Speculative Verification Run
                 draft_obj = draft_map[prob.task_id]
                 ver_cfg = copy.deepcopy(target_cfg)
-                ver_cfg.local_concise_draft_instructions = False
                 injected_body, _ = inject_draft_into_body(req_body, "anthropic", draft_obj, ver_cfg)
                 ver_payload = convert_to_openai_draft_payload(injected_body, "anthropic", ver_cfg)
                 t_v0 = time.perf_counter()
@@ -878,7 +879,6 @@ async def run_humaneval_benchmark(
                     ],
                 }
                 ver_cfg = copy.deepcopy(target_cfg)
-                ver_cfg.local_concise_draft_instructions = False
                 bug_draft_obj = DraftResult(
                     text=f"```python\n{bprob.buggy_draft}```",
                     latency_ms=200.0,

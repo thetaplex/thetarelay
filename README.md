@@ -100,11 +100,13 @@ Frontier models: `anthropic/claude-opus-4.5` (5 USD input / 25 USD output per 10
 |---|---|---|---|---|---|---|
 | HumanEval, 10 problems | `claude-opus-4.5` | 9 of 10 | 4187 → 320 (-92.4%) | 0.1115 → 0.0280 (-74.9%) | 55.6 s → 47.0 s | 10 of 10 pass@1 |
 | HumanEval, 10 problems | `openai/gpt-5.4` | 9 of 10 | 1339 → 188 (-86.0%) | 0.0235 → 0.0119 (-49.6%) | 25.2 s → 33.2 s | 10 of 10 pass@1 |
-| 15 000-token agent traces with Headroom 0.37.0 | `claude-opus-4.5` | 3 of 3 | 369 → 21 (-94.3%) | 0.2281 → 0.1276 (-44.1%) | 7.94 s → 8.33 s | 3 of 3 match |
+| 15 000-token agent traces with Headroom 0.37.0 | `claude-opus-4.5` | 3 of 3 | 74 → 21 (-71.6%) | 0.2283 → 0.1276 (-44.1%) | 8.1 s → 25.1 s | 3 of 3 valid (direct: 1 of 3) |
 | 13 800-token agent traces with Headroom 0.37.0 | `openai/gpt-5.4` | 3 of 3 | 260 → 24 (-90.8%) | 0.0781 → 0.0119 (-84.8%) | 7.45 s → 19.3 s | 3 of 3 match |
 | Drafts with injected bugs and SQL injection | `claude-opus-4.5` & `gpt-5.4` | 0 of 5 | — | — | — | 5 of 5 recovered |
 
-In the agent-trace test, the wall-clock time increased by approximately 129 ms for each turn.
+In the agent-trace tests, the wall-clock time increased because the local model read the full
+context on each turn. These results are from before the adaptive draft context
+(`THETARELAY_LOCAL_ADAPTIVE_CONTEXT`).
 `thetarelay bench` uses simulated values. It does not produce these results.
 
 ## Documentation

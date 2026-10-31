@@ -17,6 +17,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Changed the default of `THETARELAY_LOCAL_TIMEOUT` from `8.0` to `5.0` seconds.
 - The proxy and the Headroom extension size the local context for each conversation (`THETARELAY_LOCAL_ADAPTIVE_CONTEXT`, default `true`). The window grows while the new text can be read within the timeout, and restarts from the newest messages when it cannot. `THETARELAY_LOCAL_MAX_CONTEXT_CHARS` is now an upper limit, with the default changed from `24000` to `64000`. In a 12-turn replay on Ollama with `gemma4:e4b-mlx`, the total draft time decreased from 31.6 s (fixed 8000-character window) to 19.7 s, with no timeouts.
 
+### Fixed
+
+- `eval --benchmark humaneval` sent the local drafting instructions ("output only a code block") to the frontier baseline. The baseline now gets the original request, so the measured savings are not understated.
+- README: the agent-trace results for `claude-opus-4.5` now match the raw data in `benchmarks/results/live_benchmark_results_2026_10_30.json`.
+
 ### Removed
 
 - Moved the paper, the blog post and the output-quality evaluation plan to the `research` branch.
