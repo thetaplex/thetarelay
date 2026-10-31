@@ -11,6 +11,10 @@ setup:
 test *args:
     uv run pytest {{args}}
 
+# Build wheel and sdist packages
+build:
+    uv build
+
 # Lint, check formatting and type-check
 lint:
     uv run ruff check .
