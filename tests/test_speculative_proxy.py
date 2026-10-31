@@ -1,4 +1,4 @@
-"""Unit and integration tests for ThetaCode speculative proxy & Headroom extension."""
+"""Unit and integration tests for ThetaRelay speculative proxy & Headroom extension."""
 
 from __future__ import annotations
 
@@ -11,17 +11,18 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 
-from thetacode.config import SpeculativeConfig
-from thetacode.engine import (
+from thetarelay.config import SpeculativeConfig
+from thetarelay.engine import (
+    AdaptiveDraftWindow,
     DraftResult,
     SpeculativeMetrics,
     convert_to_openai_draft_payload,
     inject_draft_into_body,
     should_speculate,
 )
-from thetacode.headroom_ext import ThetaCodeStreamingResponseMiddleware, ThetaCodeTurnHook
-from thetacode.proxy import create_app
-from thetacode.streaming import intercept_anthropic_sse_stream
+from thetarelay.headroom_ext import ThetaRelayStreamingResponseMiddleware, ThetaRelayTurnHook
+from thetarelay.proxy import create_app
+from thetarelay.streaming import intercept_anthropic_sse_stream
 
 
 def test_should_speculate_filters_small_models_and_short_prompts() -> None:
@@ -113,6 +114,67 @@ def test_convert_to_openai_draft_payload_preserves_tools_and_trims_context() -> 
     # headroom_retrieve is excluded from local draft tools, edit_file is kept
     assert len(draft_payload["tools"]) == 1
     assert draft_payload["tools"][0]["function"]["name"] == "edit_file"
+
+
+@pytest.mark.parametrize(
+    ("max_chars", "recent_limit"),
+    [(100_000, 10), (1_000, 100)],  # bound by message count, then by characters
+)
+def test_draft_context_window_moves_in_jumps_for_local_prompt_cache(
+    max_chars: int, recent_limit: int
+) -> None:
+    cfg = SpeculativeConfig(
+        local_max_context_chars=max_chars, local_recent_messages_limit=recent_limit
+    )
+    conversation: list[dict[str, Any]] = []
+    previous: list[dict[str, Any]] | None = None
+    jumps = 0
+    for turn in range(40):
+        role = "user" if turn % 2 == 0 else "assistant"
+        conversation.append({"role": role, "content": f"turn {turn} " + "x" * 90})
+        if role != "user":
+            continue
+        drafted = convert_to_openai_draft_payload(
+            {"model": "gpt-5.4", "messages": conversation}, "openai", cfg
+        )["messages"]
+        assert sum(len(m["content"]) for m in drafted if m["role"] != "system") <= max_chars
+        # The previous draft context must be an exact prefix, including its last message.
+        if previous is not None and drafted[: len(previous)] != previous:
+            jumps += 1
+        previous = drafted
+    # A sliding window would change the prefix on every turn once the limit is reached.
+    assert 0 < jumps <= 6
+
+
+def test_adaptive_window_grows_while_cached_and_jumps_on_large_new_content() -> None:
+    cfg = SpeculativeConfig(local_max_context_chars=64_000, local_timeout_seconds=5.0)
+    window = AdaptiveDraftWindow()
+    affordable = window.affordable_chars(cfg)
+    conversation: list[dict[str, Any]] = [{"role": "user", "content": "Review this repository."}]
+    previous: list[dict[str, Any]] | None = None
+    for turn in range(15):  # small turns: the window only grows at the end
+        conversation += [
+            {"role": "assistant", "content": f"step {turn}"},
+            {"role": "user", "content": f"result {turn} " + "y" * 300},
+        ]
+        payload, new_chars = window.build_payload({"messages": conversation}, "openai", cfg)
+        assert new_chars <= affordable
+        if previous is not None:
+            assert payload["messages"][: len(previous)] == previous
+        previous = payload["messages"]
+    assert previous is not None
+    assert len(previous) > cfg.local_recent_messages_limit  # message limit does not apply
+
+    # A tool result too large to read in time: restart from what can be read cold.
+    conversation.append({"role": "user", "content": "diff " + "z" * (affordable * 3)})
+    payload, new_chars = window.build_payload({"messages": conversation}, "openai", cfg)
+    sent = sum(len(m["content"]) for m in payload["messages"] if m["role"] != "system")
+    assert sent <= affordable
+    assert new_chars == sent
+
+    # A slow draft lowers the estimate of what can be read in time.
+    window.observe(new_chars=10_000, elapsed_ms=20_000)
+    assert window.affordable_chars(cfg) < affordable
 
 
 def test_inject_draft_into_body_preserves_prefix_cache_and_supports_prediction() -> None:
@@ -312,7 +374,7 @@ async def test_end_to_end_proxy_with_mock_local_and_frontier() -> None:
     app.state.http_client = httpx.AsyncClient(transport=mock_transport)
 
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://thetacode.local"
+        transport=httpx.ASGITransport(app=app), base_url="http://thetarelay.local"
     ) as client:
         # Test 1: Anthropic `/v1/messages` -> Local drafts `multiply`, Frontier replies `<ACCEPT/>`,
         # Proxy swaps `<ACCEPT/>` with the full local draft!
@@ -332,8 +394,8 @@ async def test_end_to_end_proxy_with_mock_local_and_frontier() -> None:
             },
         )
         assert anth_resp.status_code == 200
-        assert anth_resp.headers["x-thetacode-drafted"] == "true"
-        assert anth_resp.headers["x-thetacode-accepted"] == "true"
+        assert anth_resp.headers["x-thetarelay-drafted"] == "true"
+        assert anth_resp.headers["x-thetarelay-accepted"] == "true"
         anth_data = anth_resp.json()
         assert anth_data["content"][0]["text"] == "def multiply(x, y):\n    return x * y\n"
         assert "<speculative_draft>" in captured_frontier_requests[0]["messages"][0]["content"]
@@ -355,14 +417,14 @@ async def test_end_to_end_proxy_with_mock_local_and_frontier() -> None:
             },
         )
         assert oai_resp.status_code == 200
-        assert oai_resp.headers["x-thetacode-mode"] == "openai_prediction"
+        assert oai_resp.headers["x-thetarelay-mode"] == "openai_prediction"
         assert captured_frontier_requests[1]["prediction"] == {
             "type": "content",
             "content": "def multiply(x, y):\n    return x * y\n",
         }
 
-        # Check `/thetacode/stats`
-        stats_resp = await client.get("/thetacode/stats")
+        # Check `/thetarelay/stats`
+        stats_resp = await client.get("/thetarelay/stats")
         stats_data = stats_resp.json()["metrics"]
         assert stats_data["requests_total"] == 2
         assert stats_data["drafts_succeeded"] == 2
@@ -414,7 +476,7 @@ async def test_headroom_turn_hook_and_streaming_middleware() -> None:
             },
         )
 
-    hook = ThetaCodeTurnHook(
+    hook = ThetaRelayTurnHook(
         cfg,
         metrics,
         draft_store,
@@ -452,7 +514,7 @@ async def test_headroom_turn_hook_and_streaming_middleware() -> None:
     # 2. Test streaming turn (`on_request` stores draft, ASGI middleware intercepts `<ACCEPT/>`)
     app = FastAPI()
     app.add_middleware(
-        ThetaCodeStreamingResponseMiddleware,
+        ThetaRelayStreamingResponseMiddleware,
         config=cfg,
         metrics=metrics,
         draft_store=draft_store,

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import time
 import uuid
+from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -14,7 +17,7 @@ import httpx
 
 from .config import SpeculativeConfig
 
-logger = logging.getLogger("thetacode")
+logger = logging.getLogger("thetarelay")
 
 
 @dataclass
@@ -211,7 +214,7 @@ def should_speculate(
     """Determine if this request should trigger local speculative drafting."""
     if headers:
         lower_headers = {k.lower(): v for k, v in headers.items()}
-        if lower_headers.get("x-thetacode-bypass", "").lower() in ("1", "true", "yes"):
+        if lower_headers.get("x-thetarelay-bypass", "").lower() in ("1", "true", "yes"):
             return False, "bypass_header"
         if lower_headers.get("x-headroom-bypass", "").lower() in ("1", "true", "yes"):
             return False, "headroom_bypass_header"
@@ -241,37 +244,163 @@ def should_speculate(
     return True, "eligible"
 
 
+def _newest_messages(converted: list[dict[str, Any]], budget: int) -> list[dict[str, Any]]:
+    """Return the newest messages that fit in `budget` characters, trimming one if needed."""
+    used = 0
+    for i in range(len(converted) - 1, -1, -1):
+        used += len(converted[i]["content"])
+        if used > budget:
+            if i == len(converted) - 1:
+                # The newest message alone is over the budget: keep its end.
+                return [{**converted[i], "content": converted[i]["content"][-budget:]}]
+            return converted[i + 1 :]
+    return converted
+
+
+def _stable_window(
+    converted: list[dict[str, Any]], config: SpeculativeConfig
+) -> list[dict[str, Any]]:
+    """Fixed-size draft window for callers that keep no state between drafts.
+
+    Move the window start in jumps of half the message limit and half the character
+    budget, never one message per turn. Consecutive drafts then share a prefix, so the
+    local server's prompt cache can skip prefill for everything but the new messages.
+    """
+    budget = config.local_max_context_chars
+    limit = config.local_recent_messages_limit
+    msg_stride = max(1, limit // 2)
+    start = -(-max(0, len(converted) - limit) // msg_stride) * msg_stride
+    total_chars = sum(len(m["content"]) for m in converted)
+    if total_chars > budget:
+        char_stride = max(1, budget // 2)
+        threshold = -(-(total_chars - budget) // char_stride) * char_stride
+        offset = 0
+        for i, m in enumerate(converted):
+            if offset >= threshold:
+                start = max(start, i)
+                break
+            offset += len(m["content"])
+        else:
+            start = len(converted)
+    return converted[start:] or _newest_messages(converted, budget)
+
+
+class AdaptiveDraftWindow:
+    """Draft window sized per conversation by what the local server can read in time.
+
+    The local server's prompt cache makes the part of the window it saw on the previous
+    draft almost free; only new text costs prefill time. So the window keeps its start and
+    grows at the end while the new text can be read within the timeout, up to
+    `local_max_context_chars`. When the new text is too large, or the ceiling is reached,
+    the window restarts from the newest messages that can be read from scratch in time.
+    The read speed is learned from completed drafts.
+    """
+
+    _MAX_CONVERSATIONS = 64
+    # Part of the timeout spent reading new text; the rest is left for writing the draft.
+    _READ_SHARE = 0.8
+
+    def __init__(self, chars_per_second: float = 1300.0) -> None:
+        # Default measured on an Apple silicon Mac with gemma4:e4b-mlx (Ollama).
+        self.chars_per_second = chars_per_second
+        # Conversation key -> (window start, messages sent last time, trimmed first message).
+        self._state: OrderedDict[str, tuple[int, int, dict[str, Any] | None]] = OrderedDict()
+
+    def affordable_chars(self, config: SpeculativeConfig) -> int:
+        """Characters of new text the local server can read within the timeout."""
+        return max(
+            500, int(self.chars_per_second * config.local_timeout_seconds * self._READ_SHARE)
+        )
+
+    def observe(self, new_chars: int, elapsed_ms: float) -> None:
+        """Update the read speed from one draft. Small reads are dominated by decode time."""
+        if new_chars < 1000 or elapsed_ms <= 0:
+            return
+        measured = new_chars / (elapsed_ms / 1000.0)
+        self.chars_per_second = 0.7 * self.chars_per_second + 0.3 * measured
+
+    def build_payload(
+        self, body: dict[str, Any], provider: str, config: SpeculativeConfig
+    ) -> tuple[dict[str, Any], int]:
+        """Return the local draft payload and the characters the server has not seen yet."""
+        new_chars = 0
+
+        def select(converted: list[dict[str, Any]], cfg: SpeculativeConfig) -> list[dict[str, Any]]:
+            nonlocal new_chars
+            window, new_chars = self._select(converted, cfg)
+            return window
+
+        payload = convert_to_openai_draft_payload(body, provider, config, select_window=select)
+        return payload, new_chars
+
+    def _select(
+        self, converted: list[dict[str, Any]], config: SpeculativeConfig
+    ) -> tuple[list[dict[str, Any]], int]:
+        if not converted:
+            return [], 0
+        key = hashlib.sha256(converted[0]["content"].encode()).hexdigest()
+        affordable = self.affordable_chars(config)
+        state = self._state.get(key)
+        if state is not None and state[0] < len(converted) and state[1] <= len(converted):
+            start, sent, trimmed = state
+            window = ([trimmed] if trimmed else [converted[start]]) + converted[start + 1 :]
+            new_chars = sum(len(m["content"]) for m in converted[max(start + 1, sent) :])
+            if (
+                new_chars <= affordable
+                and sum(len(m["content"]) for m in window) <= config.local_max_context_chars
+            ):
+                self._remember(key, (start, len(converted), trimmed))
+                return window, new_chars
+        # Restart from what can be read from scratch, leaving room to grow before the ceiling.
+        window = _newest_messages(converted, min(affordable, config.local_max_context_chars // 2))
+        start = len(converted) - len(window)
+        trimmed = window[0] if window[0] is not converted[start] else None
+        self._remember(key, (start, len(converted), trimmed))
+        return window, sum(len(m["content"]) for m in window)
+
+    def _remember(self, key: str, state: tuple[int, int, dict[str, Any] | None]) -> None:
+        self._state[key] = state
+        self._state.move_to_end(key)
+        while len(self._state) > self._MAX_CONVERSATIONS:
+            self._state.popitem(last=False)
+
+
 def convert_to_openai_draft_payload(
     body: dict[str, Any],
     provider: str,
     config: SpeculativeConfig,
+    select_window: Callable[[list[dict[str, Any]], SpeculativeConfig], list[dict[str, Any]]]
+    | None = None,
 ) -> dict[str, Any]:
     """Convert an Anthropic or OpenAI request body (already compressed by Headroom)
     into a fast, bounded OpenAI Chat Completions payload for the local drafter.
+
+    `select_window` picks which converted messages to send; by default a fixed-size
+    window that moves in jumps (see `_stable_window`).
     """
     messages = body.get("messages") or []
-    recent_messages = messages[-config.local_recent_messages_limit :]
 
     openai_messages: list[dict[str, Any]] = []
 
-    # 1. Include system instructions (trimmed)
+    # 1. Include system instructions (trimmed). The drafting instructions go in their own
+    # leading system message, never on the last user turn: a message that changes on the
+    # next turn makes the local server's prompt cache miss from that message on.
     has_tools = bool(body.get("tools"))
     if config.local_concise_draft_instructions:
         if has_tools:
-            concise_suffix = (
-                "\n\n[DRAFTING MODE: If a tool call is appropriate for the next step, "
+            drafting_instructions = (
+                "[DRAFTING MODE: If a tool call is appropriate for the next step, "
                 "invoke the tool directly with exact arguments. Otherwise output a concise "
                 "code block or direct answer without unnecessary preamble.]"
             )
         else:
-            concise_suffix = (
-                "\n\n[DRAFTING MODE: Output ONLY a single ```python code block (or tool call) "
+            drafting_instructions = (
+                "[DRAFTING MODE: Output ONLY a single ```python code block (or tool call) "
                 "containing the minimal implementation. Do NOT write explanations before or after "
                 "the code, do NOT write docstrings longer than 1 line, and do NOT include "
                 "`if __name__ == '__main__':` or example usage.]"
             )
-    else:
-        concise_suffix = ""
+        openai_messages.append({"role": "system", "content": drafting_instructions})
     if provider == "anthropic":
         sys_raw = body.get("system")
         sys_text = extract_text_from_content(sys_raw) if sys_raw else ""
@@ -283,11 +412,10 @@ def convert_to_openai_draft_payload(
                 }
             )
 
-    # 2. Convert recent conversation & tool history
-    budget_remaining = config.local_max_context_chars
-    converted_tail: list[dict[str, Any]] = []
+    # 2. Convert conversation & tool history
+    converted: list[dict[str, Any]] = []
 
-    for msg in reversed(recent_messages):
+    for msg in messages:
         if not isinstance(msg, dict):
             continue
         role = msg.get("role", "user")
@@ -304,23 +432,14 @@ def convert_to_openai_draft_payload(
         if not text:
             continue
 
-        if len(text) > budget_remaining:
-            text = text[-budget_remaining:]
-
-        budget_remaining -= len(text)
-        converted_tail.append(
+        converted.append(
             {
                 "role": "user" if role == "tool" else role,
                 "content": text,
             }
         )
-        if budget_remaining <= 0:
-            break
 
-    converted_tail.reverse()
-    if concise_suffix and converted_tail and converted_tail[-1]["role"] == "user":
-        converted_tail[-1]["content"] = converted_tail[-1]["content"] + concise_suffix
-    openai_messages.extend(converted_tail)
+    openai_messages.extend((select_window or _stable_window)(converted, config))
 
     # 3. Convert tools if present so the local model can draft tool calls too
     openai_tools: list[dict[str, Any]] = []
@@ -368,13 +487,25 @@ async def call_local_drafter(
     config: SpeculativeConfig,
     http_client: httpx.AsyncClient,
     headers: dict[str, str] | None = None,
+    window: AdaptiveDraftWindow | None = None,
 ) -> DraftResult:
     """Query the local draft model to produce a speculative completion or tool call."""
     eligible, reason = should_speculate(body, provider, config, headers)
     if not eligible:
         return DraftResult(skipped=True, skip_reason=reason)
 
+    if window is not None and config.local_adaptive_context:
+        payload, new_chars = window.build_payload(body, provider, config)
+        result = await _post_local_draft(payload, config, http_client)
+        window.observe(new_chars, result.latency_ms)
+        return result
     payload = convert_to_openai_draft_payload(body, provider, config)
+    return await _post_local_draft(payload, config, http_client)
+
+
+async def _post_local_draft(
+    payload: dict[str, Any], config: SpeculativeConfig, http_client: httpx.AsyncClient
+) -> DraftResult:
     url = f"{config.local_base_url}/chat/completions"
     req_headers = {
         "Content-Type": "application/json",

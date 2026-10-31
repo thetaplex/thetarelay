@@ -1,4 +1,4 @@
-# thetacode documentation
+# thetarelay documentation
 
 These documents use the [Diátaxis](https://diataxis.fr/) framework. Each page has one mode only.
 The text follows ASD-STE100 Simplified Technical English. Dates use ISO 8601.
@@ -13,9 +13,9 @@ Lessons for new users. Do the steps in sequence.
 
 Procedures for one task each.
 
-- [Run thetacode with Headroom](how-to/run-with-headroom.md)
+- [Run thetarelay with Headroom](how-to/run-with-headroom.md)
 - [Connect a coding agent](how-to/connect-coding-agents.md)
-- [Control when and how thetacode drafts](how-to/control-drafting.md)
+- [Control when and how thetarelay drafts](how-to/control-drafting.md)
 - [Evaluate a local draft model](how-to/evaluate-a-local-model.md)
 - [Evaluate output quality](how-to/evaluate-output-quality.md)
 

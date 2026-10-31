@@ -1,4 +1,4 @@
-"""Tests for ThetaCode A/B benchmarks, live/mock evals, and speed/efficiency/accuracy telemetry."""
+"""Tests for ThetaRelay A/B benchmarks, live/mock evals, and speed/efficiency/accuracy telemetry."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from thetacode.config import SpeculativeConfig
-from thetacode.evals import (
+from thetarelay.config import SpeculativeConfig
+from thetarelay.evals import (
     format_benchmark_report_table,
     get_builtin_scenarios,
     load_eval_scenarios_from_jsonl,
@@ -17,9 +17,11 @@ from thetacode.evals import (
     run_live_eval,
     verify_code_and_tool_accuracy,
 )
-from thetacode.humaneval import (
+from thetarelay.humaneval import (
+    compute_paired_mcnemar_and_confusion,
     evaluate_humaneval_functional_pass,
     get_builtin_humaneval_problems,
+    mutate_python_code_ast,
     run_humaneval_benchmark,
 )
 
@@ -58,7 +60,7 @@ async def test_ab_benchmark_proves_speed_efficiency_and_accuracy() -> None:
 
     # Check formatted CLI table output
     table_str = format_benchmark_report_table(report)
-    assert "THETACODE SPECULATIVE A/B BENCHMARK" in table_str
+    assert "THETARELAY SPECULATIVE A/B BENCHMARK" in table_str
     assert "anth_reject_flawed_draft" in table_str
     assert "rejected(guard)" in table_str
 
@@ -219,3 +221,67 @@ async def test_humaneval_functional_pass_and_guardrail_recovery() -> None:
     assert guard["buggy_draft_pass_at_1"] is False
     assert guard["verifier_rejected_bug"] is True
     assert guard["recovered_pass_at_1"] is True
+    assert tc["mcnemar_paired_test"]["delta_accuracy_pct"] == 0.0
+    assert tc["verifier_confusion_matrix"]["false_accepts_sycophancy"] == 0
+
+
+def test_ast_mutation_and_mcnemar_confusion_matrix() -> None:
+    """Verify AST mutation produces syntactically valid failing mutants and McNemar stats."""
+    p0 = get_builtin_humaneval_problems()[0]
+    mutants = mutate_python_code_ast(p0.canonical_solution)
+    assert len(mutants) >= 2
+    # At least one single-operator mutant must fail the unit test suite while parsing cleanly
+    failing_mutants = [
+        (label, src)
+        for label, src in mutants
+        if not evaluate_humaneval_functional_pass(code_str=src, problem=p0)[0]
+    ]
+    assert len(failing_mutants) >= 1
+
+    # Verify McNemar & Verifier Confusion Matrix with positive, sycophantic, and overstrict rows
+    sample_rows = [
+        # 1. True accept (good draft, accepted)
+        {
+            "local_pass_at_1": True,
+            "target_accepted": True,
+            "baseline_pass_at_1": True,
+            "speculative_pass_at_1": True,
+        },
+        # 2. False accept / sycophancy (bad draft, accepted -> regression!)
+        {
+            "local_pass_at_1": False,
+            "target_accepted": True,
+            "baseline_pass_at_1": True,
+            "speculative_pass_at_1": False,
+        },
+        # 3. True reject with recovery (bad draft, rejected -> rewritten to pass)
+        {
+            "local_pass_at_1": False,
+            "target_accepted": False,
+            "baseline_pass_at_1": True,
+            "speculative_pass_at_1": True,
+        },
+        # 4. False reject / overstrict (good draft, rejected -> still passes)
+        {
+            "local_pass_at_1": True,
+            "target_accepted": False,
+            "baseline_pass_at_1": True,
+            "speculative_pass_at_1": True,
+        },
+    ]
+    stats = compute_paired_mcnemar_and_confusion(sample_rows)
+    mc = stats["mcnemar_paired_test"]
+    assert mc["n_pairs"] == 4
+    assert mc["both_pass_a"] == 3
+    assert mc["baseline_only_pass_b"] == 1
+    assert mc["speculative_only_pass_c"] == 0
+    assert mc["delta_accuracy_pct"] == -25.0
+
+    cm = stats["verifier_confusion_matrix"]
+    assert cm["true_accepts"] == 1
+    assert cm["false_accepts_sycophancy"] == 1
+    assert cm["true_rejects"] == 1
+    assert cm["false_rejects_overstrict"] == 1
+    assert cm["true_accept_rate_pct"] == 50.0
+    assert cm["false_accept_rate_pct"] == 50.0
+    assert cm["post_rejection_recovery_rate_pct"] == 100.0

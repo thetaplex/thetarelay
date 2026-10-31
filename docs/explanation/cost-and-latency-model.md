@@ -43,27 +43,27 @@ draft adds more tokens than a typical response.
 ## Why the prefix cache is important
 
 The cost model assumes that the system prompt and the earlier messages stay in the provider
-cache. If thetacode changed the earlier messages, the full prompt would become uncached input. In
+cache. If thetarelay changed the earlier messages, the full prompt would become uncached input. In
 an 80 000-token context, this would cost much more than the draft saves. For this reason,
-thetacode changes only the end of the last user message. See
+thetarelay changes only the end of the last user message. See
 [How speculative drafting works](how-speculative-drafting-works.md).
 
 ## The `prediction` strategy
 
-OpenAI Predicted Outputs do not add a block to the messages. thetacode records no input overhead
-for them. The frontier model writes all output tokens, so thetacode records no output token
+OpenAI Predicted Outputs do not add a block to the messages. thetarelay records no input overhead
+for them. The frontier model writes all output tokens, so thetarelay records no output token
 savings. The provider bills rejected prediction tokens as output tokens.
 
 ## How `bench` uses this model
 
-`thetacode bench` sends the built-in scenarios through the real proxy code. A mock transport
+`thetarelay bench` sends the built-in scenarios through the real proxy code. A mock transport
 replaces the local model and the frontier model. Each scenario has fixed latencies and token
 counts. The mock frontier accepts the draft if the scenario marks the draft as accurate.
 
 Thus `bench` shows that the proxy code works and that the arithmetic is correct. It does not
-measure a real acceptance rate. To measure your acceptance rate, use `thetacode eval` with a
-target model, or read `acceptance_rate_percent` from `/thetacode/stats` in real use.
+measure a real acceptance rate. To measure your acceptance rate, use `thetarelay eval` with a
+target model, or read `acceptance_rate_percent` from `/thetarelay/stats` in real use.
 
-The `/thetacode/stats` values use the estimates from [Configuration](../reference/configuration.md).
-Set `THETACODE_INPUT_USD_PER_M`, `THETACODE_OUTPUT_USD_PER_M` and `THETACODE_FRONTIER_OUTPUT_TPS`
+The `/thetarelay/stats` values use the estimates from [Configuration](../reference/configuration.md).
+Set `THETARELAY_INPUT_USD_PER_M`, `THETARELAY_OUTPUT_USD_PER_M` and `THETARELAY_FRONTIER_OUTPUT_TPS`
 to the values of your model.

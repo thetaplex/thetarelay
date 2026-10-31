@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .config import SpeculativeConfig
 from .engine import (
+    AdaptiveDraftWindow,
     DraftResult,
     SpeculativeMetrics,
     build_anthropic_response_from_draft,
@@ -26,7 +27,7 @@ from .engine import (
 )
 from .streaming import intercept_anthropic_sse_stream, intercept_openai_sse_stream
 
-logger = logging.getLogger("thetacode.proxy")
+logger = logging.getLogger("thetarelay.proxy")
 
 _HOP_BY_HOP_HEADERS = frozenset(
     {
@@ -45,7 +46,7 @@ def _clean_outbound_headers(headers: Any) -> dict[str, str]:
     return {
         k: v
         for k, v in headers.items()
-        if k.lower() not in _HOP_BY_HOP_HEADERS and not k.lower().startswith("x-thetacode-")
+        if k.lower() not in _HOP_BY_HOP_HEADERS and not k.lower().startswith("x-thetarelay-")
     }
 
 
@@ -59,9 +60,10 @@ def _clean_inbound_response_headers(headers: Any) -> dict[str, str]:
 
 
 def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
-    """Create the ThetaCode FastAPI proxy application."""
+    """Create the ThetaRelay FastAPI proxy application."""
     cfg = config or SpeculativeConfig.from_env()
     metrics = SpeculativeMetrics()
+    window = AdaptiveDraftWindow()
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -75,7 +77,7 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
             await app.state.http_client.aclose()
 
     app = FastAPI(
-        title="ThetaCode Speculative Proxy",
+        title="ThetaRelay Speculative Proxy",
         description="Local-to-Frontier Speculative Drafting Proxy for Coding Agents",
         version="0.1.0",
         lifespan=lifespan,
@@ -102,7 +104,7 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, Any]:
         return {
-            "service": "thetacode-proxy",
+            "service": "thetarelay-proxy",
             "status": "healthy",
             "headroom_middleware_active": getattr(app.state, "headroom_middleware_active", False),
             "local_model": cfg.local_model,
@@ -111,10 +113,10 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
         }
 
     @app.get("/stats")
-    @app.get("/thetacode/stats")
+    @app.get("/thetarelay/stats")
     async def stats() -> dict[str, Any]:
         return {
-            "service": "thetacode-proxy",
+            "service": "thetarelay-proxy",
             "headroom_middleware_active": getattr(app.state, "headroom_middleware_active", False),
             "config": {
                 "local_base_url": cfg.local_base_url,
@@ -144,6 +146,7 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
             config=cfg,
             http_client=client,
             headers=inbound_headers,
+            window=window,
         )
 
         active_mode = "none"
@@ -171,9 +174,9 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
         outbound_headers["content-type"] = "application/json"
 
         spec_headers = {
-            "x-thetacode-drafted": "true" if draft.has_draft else "false",
-            "x-thetacode-mode": active_mode,
-            "x-thetacode-draft-ms": f"{draft.latency_ms:.1f}",
+            "x-thetarelay-drafted": "true" if draft.has_draft else "false",
+            "x-thetarelay-mode": active_mode,
+            "x-thetarelay-draft-ms": f"{draft.latency_ms:.1f}",
         }
 
         if stream:
@@ -253,8 +256,8 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                         active_mode=active_mode,
                         frontier_latency_ms=frontier_ms,
                     )
-                    resp_headers["x-thetacode-accepted"] = "true"
-                    resp_headers["x-thetacode-tokens-saved"] = str(saved_tok)
+                    resp_headers["x-thetarelay-accepted"] = "true"
+                    resp_headers["x-thetarelay-tokens-saved"] = str(saved_tok)
                     swapped = build_anthropic_response_from_draft(resp_json, draft)
                     return JSONResponse(status_code=200, content=swapped, headers=resp_headers)
                 else:
@@ -265,7 +268,7 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                         active_mode=active_mode,
                         frontier_latency_ms=frontier_ms,
                     )
-                    resp_headers["x-thetacode-accepted"] = "false"
+                    resp_headers["x-thetarelay-accepted"] = "false"
             except Exception as exc:
                 logger.warning("Failed to inspect non-streaming Anthropic response: %s", exc)
 
@@ -297,6 +300,7 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
             config=cfg,
             http_client=client,
             headers=inbound_headers,
+            window=window,
         )
 
         active_mode = "none"
@@ -329,9 +333,9 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
         outbound_headers["content-type"] = "application/json"
 
         spec_headers = {
-            "x-thetacode-drafted": "true" if draft.has_draft else "false",
-            "x-thetacode-mode": active_mode,
-            "x-thetacode-draft-ms": f"{draft.latency_ms:.1f}",
+            "x-thetarelay-drafted": "true" if draft.has_draft else "false",
+            "x-thetarelay-mode": active_mode,
+            "x-thetarelay-draft-ms": f"{draft.latency_ms:.1f}",
         }
 
         if stream:
@@ -415,8 +419,8 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                             active_mode=active_mode,
                             frontier_latency_ms=frontier_ms,
                         )
-                        resp_headers["x-thetacode-accepted"] = "true"
-                        resp_headers["x-thetacode-tokens-saved"] = str(saved_tok)
+                        resp_headers["x-thetarelay-accepted"] = "true"
+                        resp_headers["x-thetarelay-tokens-saved"] = str(saved_tok)
                         swapped = build_openai_response_from_draft(resp_json, draft)
                         return JSONResponse(status_code=200, content=swapped, headers=resp_headers)
                     else:
@@ -427,7 +431,7 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                             active_mode=active_mode,
                             frontier_latency_ms=frontier_ms,
                         )
-                        resp_headers["x-thetacode-accepted"] = "false"
+                        resp_headers["x-thetarelay-accepted"] = "false"
             except Exception as exc:
                 logger.warning("Failed to inspect non-streaming OpenAI response: %s", exc)
 

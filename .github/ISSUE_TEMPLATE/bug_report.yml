@@ -21,8 +21,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: thetacode version
-      description: Version of `thetacode`, or the commit hash.
+      label: thetarelay version
+      description: Version of `thetarelay`, or the commit hash.
     validations:
       required: true
   - type: input

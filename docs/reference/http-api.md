@@ -1,6 +1,6 @@
 # Reference: HTTP API
 
-## Endpoints of `thetacode proxy`
+## Endpoints of `thetarelay proxy`
 
 | Method | Path | Description |
 |---|---|---|
@@ -8,61 +8,61 @@
 | `POST` | `/v1/chat/completions` | OpenAI Chat Completions API. Streaming and non-streaming. |
 | `POST` | `/chat/completions` | Same as `/v1/chat/completions`. |
 | `GET` | `/health` | Service status and active settings. |
-| `GET` | `/stats` | Same as `/thetacode/stats`. |
-| `GET` | `/thetacode/stats` | Settings and metrics. |
+| `GET` | `/stats` | Same as `/thetarelay/stats`. |
+| `GET` | `/thetarelay/stats` | Settings and metrics. |
 
 The proxy has no authentication. It forwards the request headers of the client to the provider,
 with these exceptions:
 
 - It removes `host`, `content-length`, `transfer-encoding`, `connection`, `keep-alive`,
   `accept-encoding` and `content-encoding`.
-- It removes all `x-thetacode-*` headers.
+- It removes all `x-thetarelay-*` headers.
 - It sets `content-type: application/json`.
 
 It forwards the query string to the provider.
 
 ## Endpoints of the Headroom extension
 
-When thetacode runs inside `headroom proxy`, it adds `GET /thetacode/stats` only. Headroom serves
+When thetarelay runs inside `headroom proxy`, it adds `GET /thetarelay/stats` only. Headroom serves
 all other endpoints.
 
 ## Request headers
 
 | Header | Value | Effect |
 |---|---|---|
-| `x-thetacode-bypass` | `1`, `true` or `yes` | No draft for this request. |
+| `x-thetarelay-bypass` | `1`, `true` or `yes` | No draft for this request. |
 | `x-headroom-bypass` | `1`, `true` or `yes` | No draft for this request. |
 
 ## Response headers
 
-`thetacode proxy` adds these headers to `/v1/messages` and `/chat/completions` responses.
+`thetarelay proxy` adds these headers to `/v1/messages` and `/chat/completions` responses.
 
 | Header | Values | When |
 |---|---|---|
-| `x-thetacode-drafted` | `true`, `false` | Always. |
-| `x-thetacode-mode` | `none`, `accept_swap`, `openai_prediction`, `context_only`, `prediction` | Always. `none` means no draft. |
-| `x-thetacode-draft-ms` | Number, one decimal place | Always. Draft time in milliseconds. |
-| `x-thetacode-accepted` | `true`, `false` | Non-streaming `accept_swap` responses with status 200. |
-| `x-thetacode-tokens-saved` | Integer | Non-streaming responses where the draft was accepted. |
+| `x-thetarelay-drafted` | `true`, `false` | Always. |
+| `x-thetarelay-mode` | `none`, `accept_swap`, `openai_prediction`, `context_only`, `prediction` | Always. `none` means no draft. |
+| `x-thetarelay-draft-ms` | Number, one decimal place | Always. Draft time in milliseconds. |
+| `x-thetarelay-accepted` | `true`, `false` | Non-streaming `accept_swap` responses with status 200. |
+| `x-thetarelay-tokens-saved` | Integer | Non-streaming responses where the draft was accepted. |
 
-For streaming responses, the headers go out before thetacode knows if the draft was accepted.
-Thus streaming responses do not have `x-thetacode-accepted`.
+For streaming responses, the headers go out before thetarelay knows if the draft was accepted.
+Thus streaming responses do not have `x-thetarelay-accepted`.
 
 ## `GET /health` response
 
 | Field | Type | Description |
 |---|---|---|
-| `service` | string | Always `thetacode-proxy`. |
+| `service` | string | Always `thetarelay-proxy`. |
 | `status` | string | Always `healthy`. |
 | `headroom_middleware_active` | boolean | `true` if Headroom `CompressionMiddleware` is active. |
 | `local_model` | string | Local draft model. |
 | `local_base_url` | string | Local API base URL. |
 | `strategy` | string | Configured strategy. |
 
-## `GET /thetacode/stats` response
+## `GET /thetarelay/stats` response
 
 The `config` object contains `local_base_url`, `local_model`, `strategy` and `accept_token`.
-`thetacode proxy` also adds `anthropic_upstream_url` and `openai_upstream_url`.
+`thetarelay proxy` also adds `anthropic_upstream_url` and `openai_upstream_url`.
 
 The `metrics` object contains the counters since the process started:
 
@@ -88,6 +88,6 @@ The `metrics` object contains the counters since the process started:
 | `avg_frontier_latency_ms` | Mean frontier time. Non-streaming requests only. |
 | `p50_end_to_end_latency_ms`, `p95_end_to_end_latency_ms` | Percentiles of draft time + frontier time. Non-streaming requests only. |
 | `estimated_net_latency_saved_ms` | Avoided decode time − draft time, summed. Rejected drafts count as negative. |
-| `prefix_cache_preserved_count` | Drafted turns where thetacode did not change the prompt prefix. thetacode counts this value. It does not read it from the provider. |
+| `prefix_cache_preserved_count` | Drafted turns where thetarelay did not change the prompt prefix. thetarelay counts this value. It does not read it from the provider. |
 
-thetacode keeps the metrics in memory. A restart sets them to 0.
+thetarelay keeps the metrics in memory. A restart sets them to 0.

@@ -1,9 +1,9 @@
 """Native Headroom Proxy Extension (`headroom.proxy_extension`).
 
-Allows ThetaCode to run directly *inside* `headroom proxy` or `headroom wrap` via:
-    headroom proxy --proxy-extension thetacode
+Allows ThetaRelay to run directly *inside* `headroom proxy` or `headroom wrap` via:
+    headroom proxy --proxy-extension thetarelay
 or:
-    HEADROOM_PROXY_EXTENSIONS=thetacode headroom wrap claude
+    HEADROOM_PROXY_EXTENSIONS=thetarelay headroom wrap claude
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import httpx
 
 from .config import SpeculativeConfig
 from .engine import (
+    AdaptiveDraftWindow,
     DraftResult,
     SpeculativeMetrics,
     build_anthropic_response_from_draft,
@@ -25,16 +26,16 @@ from .engine import (
     response_accepted_draft,
 )
 
-logger = logging.getLogger("thetacode.headroom_ext")
+logger = logging.getLogger("thetarelay.headroom_ext")
 
 
-class ThetaCodeTurnHook:
+class ThetaRelayTurnHook:
     """Headroom TurnHook that runs local speculative drafting AFTER Headroom's
     context compression pipeline (SmartCrusher, CodeAwareCompressor, CCR) has shrunk
     the context window!
     """
 
-    name = "thetacode_speculative"
+    name = "thetarelay_speculative"
     stream_safe = True  # Allow running on_request on streaming turns too!
 
     def __init__(
@@ -48,6 +49,7 @@ class ThetaCodeTurnHook:
         self.metrics = metrics
         self.draft_store = draft_store
         self._sync_transport = sync_transport
+        self.window = AdaptiveDraftWindow()
 
     def on_request(self, ctx: Any) -> None:
         """Called by Headroom after compression, right before upstream dispatch.
@@ -55,7 +57,7 @@ class ThetaCodeTurnHook:
         Note: `TurnHook.on_request` in Headroom is synchronous (`def on_request(self, ctx)`),
         so for async local drafting we either run the draft in our outer ASGI middleware
         or via a dedicated sync/thread bridge if needed. To avoid blocking the event loop,
-        when running inside Headroom we use `ThetaCodeASGIMiddleware` + `TurnHook` together:
+        when running inside Headroom we use `ThetaRelayASGIMiddleware` + `TurnHook` together:
         if the ASGI middleware already attached a draft or if we draft on the compressed
         messages using a thread-pooled httpx client, we inject it cleanly here!
         """
@@ -99,8 +101,8 @@ class ThetaCodeTurnHook:
         # Store draft keyed by ctx.tags id AND in ctx.tags['_headroom_savings_attribution']
         # metadata or draft_store so streaming ASGI middleware can intercept <ACCEPT/>
         if isinstance(getattr(ctx, "tags", None), dict):
-            ctx.tags["_thetacode_draft"] = draft
-            ctx.tags["_thetacode_mode"] = active_mode
+            ctx.tags["_thetarelay_draft"] = draft
+            ctx.tags["_thetarelay_mode"] = active_mode
             ledger = ctx.tags.get("_headroom_savings_attribution")
             if isinstance(ledger, list):
                 self.draft_store[id(ledger)] = draft
@@ -109,8 +111,8 @@ class ThetaCodeTurnHook:
 
                 timings = ctx.tags.get(STAGE_TIMING_TAG)
                 if isinstance(timings, dict):
-                    timings["ext:thetacode_local_draft"] = (
-                        timings.get("ext:thetacode_local_draft", 0.0) + draft.latency_ms
+                    timings["ext:thetarelay_local_draft"] = (
+                        timings.get("ext:thetarelay_local_draft", 0.0) + draft.latency_ms
                     )
             except ImportError:
                 pass
@@ -126,7 +128,11 @@ class ThetaCodeTurnHook:
         if not eligible:
             return DraftResult(skipped=True, skip_reason=reason)
 
-        payload = convert_to_openai_draft_payload(body, provider, self.config)
+        new_chars = 0
+        if self.config.local_adaptive_context:
+            payload, new_chars = self.window.build_payload(body, provider, self.config)
+        else:
+            payload = convert_to_openai_draft_payload(body, provider, self.config)
         url = f"{self.config.local_base_url}/chat/completions"
         req_headers = {
             "Content-Type": "application/json",
@@ -141,6 +147,7 @@ class ThetaCodeTurnHook:
             ) as client:
                 resp = client.post(url, json=payload, headers=req_headers)
             elapsed_ms = (time.perf_counter() - started) * 1000.0
+            self.window.observe(new_chars, elapsed_ms)
             if resp.status_code != 200:
                 return DraftResult(latency_ms=elapsed_ms, error=f"http_{resp.status_code}")
             data = resp.json()
@@ -181,6 +188,7 @@ class ThetaCodeTurnHook:
             )
         except Exception as exc:
             elapsed_ms = (time.perf_counter() - started) * 1000.0
+            self.window.observe(new_chars, elapsed_ms)
             return DraftResult(latency_ms=elapsed_ms, error=str(exc))
 
     async def on_response(
@@ -190,7 +198,7 @@ class ThetaCodeTurnHook:
         tags = getattr(ctx, "tags", None)
         if not isinstance(tags, dict):
             return None
-        draft: DraftResult | None = tags.get("_thetacode_draft")
+        draft: DraftResult | None = tags.get("_thetarelay_draft")
         if not draft or not draft.has_draft:
             return None
 
@@ -204,7 +212,7 @@ class ThetaCodeTurnHook:
                 saved_usd = (saved_tok / 1_000_000.0) * self.config.estimated_output_usd_per_million
                 if hasattr(ctx, "record_savings"):
                     ctx.record_savings(
-                        "thetacode_speculative",
+                        "thetarelay_speculative",
                         tokens=saved_tok,
                         usd=saved_usd,
                         details={"accepted_draft": True},
@@ -226,7 +234,7 @@ class ThetaCodeTurnHook:
                     ) * self.config.estimated_output_usd_per_million
                     if hasattr(ctx, "record_savings"):
                         ctx.record_savings(
-                            "thetacode_speculative",
+                            "thetarelay_speculative",
                             tokens=saved_tok,
                             usd=saved_usd,
                             details={"accepted_draft": True},
@@ -240,7 +248,7 @@ class ThetaCodeTurnHook:
         return None
 
 
-class ThetaCodeStreamingResponseMiddleware:
+class ThetaRelayStreamingResponseMiddleware:
     """ASGI Middleware that intercepts streaming SSE responses inside Headroom when a
     speculative draft is active on the request's scope, swapping `<ACCEPT/>` with
     the drafted SSE events on the fly and recording Headroom scope savings/timing.
@@ -402,7 +410,7 @@ class ThetaCodeStreamingResponseMiddleware:
 
                         record_scope_savings(
                             scope,
-                            "thetacode_speculative",
+                            "thetarelay_speculative",
                             tokens=saved_tok,
                             usd=saved_usd,
                             details={"accepted_draft": True},
@@ -446,14 +454,14 @@ class ThetaCodeStreamingResponseMiddleware:
 
 
 def install(app: Any, config: Any) -> None:
-    """Entry point invoked by `headroom proxy --proxy-extension thetacode`."""
+    """Entry point invoked by `headroom proxy --proxy-extension thetarelay`."""
     spec_config = SpeculativeConfig.from_env()
     metrics = SpeculativeMetrics()
     draft_store: dict[int, DraftResult] = {}
 
     # 1. Register streaming response interceptor middleware
     app.add_middleware(
-        ThetaCodeStreamingResponseMiddleware,
+        ThetaRelayStreamingResponseMiddleware,
         config=spec_config,
         metrics=metrics,
         draft_store=draft_store,
@@ -463,20 +471,20 @@ def install(app: Any, config: Any) -> None:
     try:
         from headroom.proxy.turn_hooks import register_turn_hook
 
-        hook = ThetaCodeTurnHook(spec_config, metrics, draft_store)
+        hook = ThetaRelayTurnHook(spec_config, metrics, draft_store)
         register_turn_hook(hook)
         logger.info(
-            "ThetaCode TurnHook registered with Headroom (local_model=%s, url=%s)",
+            "ThetaRelay TurnHook registered with Headroom (local_model=%s, url=%s)",
             spec_config.local_model,
             spec_config.local_base_url,
         )
     except ImportError:
         logger.warning("headroom.proxy.turn_hooks not found; skipping TurnHook registration")
 
-    # 3. Add status endpoint `/thetacode/stats` to Headroom's FastAPI app
-    async def thetacode_stats() -> dict[str, Any]:
+    # 3. Add status endpoint `/thetarelay/stats` to Headroom's FastAPI app
+    async def thetarelay_stats() -> dict[str, Any]:
         return {
-            "extension": "thetacode",
+            "extension": "thetarelay",
             "config": {
                 "local_base_url": spec_config.local_base_url,
                 "local_model": spec_config.local_model,
@@ -486,4 +494,4 @@ def install(app: Any, config: Any) -> None:
             "metrics": metrics.to_dict(),
         }
 
-    app.get("/thetacode/stats")(thetacode_stats)
+    app.get("/thetarelay/stats")(thetarelay_stats)

@@ -1,6 +1,6 @@
 # How to evaluate a local draft model
 
-Use `thetacode eval` to measure a local model on coding-agent tasks before you use it in the proxy.
+Use `thetarelay eval` to measure a local model on coding-agent tasks before you use it in the proxy.
 The output is JSON.
 
 > **WARNING:** The `humaneval` benchmark runs code that a model wrote. It runs the code in a child
@@ -39,7 +39,7 @@ The target model must have an OpenAI-compatible Chat Completions endpoint.
 2. Read `two_phase_target_verification` in the output. It shows the baseline time, the
    speculative time, the speedup and the number of accepted drafts.
 
-thetacode runs all draft turns first and all target turns after. This prevents model swaps on a
+thetarelay runs all draft turns first and all target turns after. This prevents model swaps on a
 server that has memory for one model only.
 
 ## Measure functional accuracy with HumanEval
@@ -60,9 +60,8 @@ server that has memory for one model only.
 
 3. Read `local_pass_at_1_pct`. With a target model, read `target_comparison` also.
 
-For a hosted target, set `THETACODE_TARGET_API_KEY` (or `OPENROUTER_API_KEY` or
-`OPENAI_API_KEY`) to the key of the target provider. For `--benchmark scenarios`, set
-`THETACODE_LOCAL_API_KEY` in its place. See [Known limitations](../reference/known-limitations.md).
+For a hosted target, set `THETARELAY_TARGET_API_KEY` (or `OPENROUTER_API_KEY` or
+`OPENAI_API_KEY`) to the key of the target provider. See [Known limitations](../reference/known-limitations.md).
 
 ## Use your own scenarios
 

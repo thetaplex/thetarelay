@@ -1,11 +1,11 @@
-"""Benchmark and evaluation suite for ThetaCode speculative drafting.
+"""Benchmark and evaluation suite for ThetaRelay speculative drafting.
 
 Provides:
 1. Built-in coding agent benchmark scenarios covering code generation, tool use,
    streaming `<ACCEPT/>` swaps, OpenAI Predicted Outputs, draft rejections (accuracy
    guardrails), and small-model/short-prompt bypasses.
 2. Deterministic A/B simulator (`run_ab_benchmark`) comparing Baseline (direct to
-   frontier) vs. ThetaCode Speculative across:
+   frontier) vs. ThetaRelay Speculative across:
    - Speed: Wall-clock latency, local draft overhead, avoided frontier decode time, speedup
    - Efficiency: Output tokens saved, input token overhead, net USD savings, prefix cache
    - Accuracy: Exact output / tool-call equivalence, false-accept detection (0% corruption)
@@ -346,9 +346,28 @@ def get_builtin_scenarios() -> list[CodingEvalScenario]:
 def _extract_python_code_blocks(text: str) -> str:
     """Extract Python code from markdown ```python ... ``` fences if present."""
     stripped = text.strip()
-    fence_matches = re.findall(r"```(?:python|py)?\s*\n(.*?)```", stripped, flags=re.DOTALL)
+    fence_matches: list[str] = re.findall(
+        r"```(?:python|py)?\s*\n(.*?)```", stripped, flags=re.DOTALL
+    )
     if fence_matches:
-        return "\n\n".join(m.strip() for m in fence_matches)
+        joined = "\n\n".join(m.strip() for m in fence_matches)
+        with contextlib.suppress(SyntaxError):
+            ast.parse(joined)
+            return joined
+        # When a model critiques a snippet in one fence and provides the complete function
+        # in a later fence, prefer the last syntactically valid block containing `def `.
+        for block in reversed(fence_matches):
+            candidate = block.strip()
+            with contextlib.suppress(SyntaxError):
+                ast.parse(candidate)
+                if "def " in candidate:
+                    return candidate
+        for block in reversed(fence_matches):
+            candidate = block.strip()
+            with contextlib.suppress(SyntaxError):
+                ast.parse(candidate)
+                return candidate
+        return fence_matches[-1].strip()
     return stripped
 
 
@@ -548,7 +567,7 @@ async def run_ab_benchmark(
     config: SpeculativeConfig | None = None,
     scenarios: list[CodingEvalScenario] | None = None,
 ) -> BenchmarkSuiteReport:
-    """Execute the deterministic A/B benchmark suite through the real ThetaCode proxy pipeline.
+    """Execute the deterministic A/B benchmark suite through the real ThetaRelay proxy pipeline.
 
     Uses `httpx.MockTransport` (never hits live external APIs) while exercising the actual
     FastAPI routes, context converter, prefix-cache-safe injector, and SSE stream interceptor.
@@ -727,7 +746,7 @@ async def run_ab_benchmark(
     output_price = cfg.estimated_output_usd_per_million / 1_000_000.0
 
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://thetacode.bench"
+        transport=httpx.ASGITransport(app=app), base_url="http://thetarelay.bench"
     ) as client:
         for sc in suite:
             active_scenario = sc
@@ -736,8 +755,8 @@ async def run_ab_benchmark(
 
             resp = await client.post(endpoint, json=copy.deepcopy(sc.request_body))
 
-            drafted = resp.headers.get("x-thetacode-drafted") == "true"
-            mode = resp.headers.get("x-thetacode-mode", "none")
+            drafted = resp.headers.get("x-thetarelay-drafted") == "true"
+            mode = resp.headers.get("x-thetarelay-mode", "none")
 
             # Extract returned text & tool calls from response (JSON or SSE)
             actual_text = ""
@@ -769,7 +788,7 @@ async def run_ab_benchmark(
                                 "input": blk.get("input", {}),
                             }
                         )
-                accepted = resp.headers.get("x-thetacode-accepted") == "true"
+                accepted = resp.headers.get("x-thetarelay-accepted") == "true"
             else:
                 data = resp.json()
                 msg = (data.get("choices") or [{}])[0].get("message") or {}
@@ -878,7 +897,7 @@ async def run_ab_benchmark(
                 )
             )
 
-        stats_resp = await client.get("/thetacode/stats")
+        stats_resp = await client.get("/thetarelay/stats")
         proxy_stats = stats_resp.json()["metrics"]
 
     await app.state.http_client.aclose()
@@ -922,7 +941,7 @@ def format_benchmark_report_table(report: BenchmarkSuiteReport) -> str:
     lines: list[str] = [
         "",
         sep_eq,
-        "              THETACODE SPECULATIVE A/B BENCHMARK (SPEED / EFFICIENCY / ACCURACY)        ",
+        "              THETARELAY SPECULATIVE A/B BENCHMARK (SPEED / EFFICIENCY / ACCURACY)       ",
         sep_eq,
         header_cols,
         sep_dash,
@@ -1189,12 +1208,20 @@ async def run_live_eval(
         # Phase 2 (Optional): Batched Target Model Verification & Baseline Comparison
         target_summary: dict[str, Any] | None = None
         if target_model:
+            import os
+
+            target_api_key = (
+                os.environ.get("THETARELAY_TARGET_API_KEY")
+                or os.environ.get("OPENROUTER_API_KEY")
+                or os.environ.get("OPENAI_API_KEY")
+                or cfg.local_api_key
+            )
             t_url_base = (target_base_url or cfg.local_base_url).rstrip("/")
             warmup_target_ms = await _warmup_openai_model(
                 client,
                 t_url_base,
                 target_model,
-                cfg.local_api_key,
+                target_api_key,
                 disable_thinking=True,
             )
             total_baseline_ms = 0.0
@@ -1221,7 +1248,7 @@ async def run_live_eval(
                 base_resp = await client.post(
                     f"{t_url_base}/chat/completions",
                     json=base_payload,
-                    headers={"Authorization": f"Bearer {cfg.local_api_key}"},
+                    headers={"Authorization": f"Bearer {target_api_key}"},
                     timeout=60.0,
                 )
                 base_ms = (time.perf_counter() - t_base0) * 1000.0
@@ -1247,7 +1274,7 @@ async def run_live_eval(
                 ver_resp = await client.post(
                     f"{t_url_base}/chat/completions",
                     json=verify_payload,
-                    headers={"Authorization": f"Bearer {cfg.local_api_key}"},
+                    headers={"Authorization": f"Bearer {target_api_key}"},
                     timeout=60.0,
                 )
                 verify_ms = (time.perf_counter() - t_ver0) * 1000.0

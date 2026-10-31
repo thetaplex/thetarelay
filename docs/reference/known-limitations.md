@@ -14,11 +14,11 @@ This list applies to version 0.1.0 and the `feat/speculative-proxy` branch. Last
 
 | Limitation | Effect |
 |---|---|
-| The `prediction` strategy works only for OpenAI text drafts. | For Anthropic requests and for tool-call drafts, thetacode adds the `<ACCEPT/>` instruction but does not swap the response. The client can receive the text `<ACCEPT/>`. Use `auto` in place of `prediction`. |
-| thetacode does not validate `THETACODE_STRATEGY`. | A value that is not valid causes the same problem as `prediction`. |
-| The Headroom extension calls the local model synchronously. | Each drafted turn can stop the Headroom process for up to `THETACODE_LOCAL_TIMEOUT` seconds. |
+| The `prediction` strategy works only for OpenAI text drafts. | For Anthropic requests and for tool-call drafts, thetarelay adds the `<ACCEPT/>` instruction but does not swap the response. The client can receive the text `<ACCEPT/>`. Use `auto` in place of `prediction`. |
+| thetarelay does not validate `THETARELAY_STRATEGY`. | A value that is not valid causes the same problem as `prediction`. |
+| The Headroom extension calls the local model synchronously. | Each drafted turn can stop the Headroom process for up to `THETARELAY_LOCAL_TIMEOUT` seconds. |
 | The Headroom extension reads environment variables only. | It does not use the configuration that Headroom gives to it. |
-| Token counts are estimates. | thetacode uses characters / 4 when the local API does not return `usage`. |
+| Token counts are estimates. | thetarelay uses characters / 4 when the local API does not return `usage`. |
 
 ## Metrics and benchmarks
 
@@ -26,7 +26,7 @@ This list applies to version 0.1.0 and the `feat/speculative-proxy` branch. Last
 |---|---|
 | `bench` uses simulated latencies, token counts and frontier decisions. | Its speedup and cost values show the method. They are not measurements. |
 | `bench` always reports `false_accepts: 0`. | The value is fixed in the code. It is not measured. |
-| `prefix_cache_preserved_count` is counted, not measured. | thetacode does not read the cache usage from the provider. |
+| `prefix_cache_preserved_count` is counted, not measured. | thetarelay does not read the cache usage from the provider. |
 | Streaming requests do not record frontier time. | `avg_frontier_latency_ms` and the end-to-end percentiles include non-streaming requests only. |
 | `openai_prediction` turns do not record accepted or rejected outcomes. | `acceptance_rate_percent` does not include them. |
 
@@ -34,8 +34,7 @@ This list applies to version 0.1.0 and the `feat/speculative-proxy` branch. Last
 
 | Limitation | Effect |
 |---|---|
-| `thetacode` without a command does not accept options. | Use `thetacode proxy --port 9000`, not `thetacode --port 9000`. |
-| `--port 0` has no effect. | thetacode uses the default port. |
+| `thetarelay` without a command does not accept options. | Use `thetarelay proxy --port 9000`, not `thetarelay --port 9000`. |
+| `--port 0` has no effect. | thetarelay uses the default port. |
 | `eval --json` has no effect. | `eval` always writes JSON. |
-| In `eval --benchmark scenarios`, the target model receives `THETACODE_LOCAL_API_KEY`. | A hosted target model rejects the request unless `THETACODE_LOCAL_API_KEY` holds its key. `eval --benchmark humaneval` sends the target key correctly. |
-| `eval` supports OpenAI-compatible targets only. | You cannot use the Anthropic API as the target in `eval`. |
+| `eval` supports OpenAI-compatible targets only. | You cannot use the native Anthropic `/v1/messages` API as the target in `eval`; use an OpenAI-compatible endpoint such as OpenRouter. |

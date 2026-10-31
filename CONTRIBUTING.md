@@ -7,8 +7,8 @@ Thanks for helping. By taking part you agree to the [Code of Conduct](CODE_OF_CO
 Prerequisites: [uv](https://docs.astral.sh/uv/getting-started/installation/) and [just](https://just.systems/man/en/packages.html).
 
 ```sh
-git clone https://github.com/thetaplex/thetacode.git
-cd thetacode
+git clone https://github.com/thetaplex/thetarelay.git
+cd thetarelay
 just setup    # install from the lockfile
 just check    # lint, format check, type check, tests (what CI runs)
 just fmt      # format and apply safe lint fixes

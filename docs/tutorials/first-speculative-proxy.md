@@ -1,7 +1,7 @@
 # Tutorial: run your first speculative proxy
 
 In this tutorial, you run the built-in benchmark. Then you start the proxy with a local model and
-send one request to Anthropic through it. At the end, you can read the `x-thetacode-*` response
+send one request to Anthropic through it. At the end, you can read the `x-thetarelay-*` response
 headers and the statistics endpoint.
 
 Time: approximately 20 minutes.
@@ -18,13 +18,13 @@ You need:
 > **CAUTION:** Step 5 sends a request to the Anthropic API. Anthropic charges your account for
 > this request.
 
-## Step 1: Install thetacode from source
+## Step 1: Install thetarelay from source
 
 1. Clone the repository:
 
    ```sh
-   git clone https://github.com/thetaplex/thetacode.git
-   cd thetacode
+   git clone https://github.com/thetaplex/thetarelay.git
+   cd thetarelay
    ```
 
 2. Install the project from the lockfile:
@@ -43,7 +43,7 @@ The benchmark does not use the network. It sends simulated turns through the rea
    just bench
    ```
 
-2. Read the table. Each row is one scenario. The `Mode` column shows the strategy that thetacode
+2. Read the table. Each row is one scenario. The `Mode` column shows the strategy that thetarelay
    used for that scenario.
 
 The latency and cost values are simulated. They show the method, not your hardware. For more
@@ -89,12 +89,12 @@ information, see [Cost and latency model](../explanation/cost-and-latency-model.
 
    | Header | What it tells you |
    |---|---|
-   | `x-thetacode-drafted: true` | The local model made a draft. |
-   | `x-thetacode-mode: accept_swap` | thetacode asked the frontier model to accept or replace the draft. |
-   | `x-thetacode-draft-ms` | The time of the local draft, in milliseconds. |
-   | `x-thetacode-accepted` | `true` if the frontier model accepted the draft. |
+   | `x-thetarelay-drafted: true` | The local model made a draft. |
+   | `x-thetarelay-mode: accept_swap` | thetarelay asked the frontier model to accept or replace the draft. |
+   | `x-thetarelay-draft-ms` | The time of the local draft, in milliseconds. |
+   | `x-thetarelay-accepted` | `true` if the frontier model accepted the draft. |
 
-If `x-thetacode-accepted` is `true`, the response body contains the local draft. If it is
+If `x-thetarelay-accepted` is `true`, the response body contains the local draft. If it is
 `false`, the response body contains the normal frontier response.
 
 ## Step 6: Read the statistics
@@ -102,7 +102,7 @@ If `x-thetacode-accepted` is `true`, the response body contains the local draft.
 1. Get the statistics:
 
    ```sh
-   curl http://127.0.0.1:8788/thetacode/stats
+   curl http://127.0.0.1:8788/thetarelay/stats
    ```
 
 2. Find `acceptance_rate_percent` in the `metrics` object. This is the percentage of drafts that
@@ -116,5 +116,5 @@ read the result of the draft verification.
 ## Next steps
 
 - [Connect a coding agent](../how-to/connect-coding-agents.md)
-- [Run thetacode with Headroom](../how-to/run-with-headroom.md)
+- [Run thetarelay with Headroom](../how-to/run-with-headroom.md)
 - [How speculative drafting works](../explanation/how-speculative-drafting-works.md)

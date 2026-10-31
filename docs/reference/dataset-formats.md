@@ -1,6 +1,6 @@
 # Reference: dataset formats
 
-Both formats are JSON Lines: one JSON object on each line. thetacode ignores empty lines. The
+Both formats are JSON Lines: one JSON object on each line. thetarelay ignores empty lines. The
 encoding is UTF-8.
 
 ## Scenario file (`bench --dataset`, `eval --dataset`)
@@ -30,7 +30,7 @@ Example line:
 
 ## HumanEval file (`eval --benchmark humaneval --dataset`)
 
-thetacode reads the format of [openai/human-eval](https://github.com/openai/human-eval). It reads
+thetarelay reads the format of [openai/human-eval](https://github.com/openai/human-eval). It reads
 `.jsonl` and gzip-compressed `.jsonl.gz` files.
 
 | Field | Type | Required | Description |
@@ -39,4 +39,4 @@ thetacode reads the format of [openai/human-eval](https://github.com/openai/huma
 | `entry_point` | string | Yes | Name of the function under test. |
 | `prompt` | string | Yes | Function signature and docstring. |
 | `test` | string | Yes | Python source that defines `check(candidate)`. |
-| `canonical_solution` | string | No | Reference solution. thetacode does not use it. |
+| `canonical_solution` | string | No | Reference solution. thetarelay does not use it. |

@@ -3,7 +3,7 @@
 Measures functional accuracy (`pass@1`), wall-clock speedup, and token efficiency across:
 1. Local Draft Model alone (`local_pass@1`)
 2. Target / Frontier Model Baseline alone (`baseline_pass@1`)
-3. ThetaCode Speculative Drafter + Target Verifier (`speculative_pass@1`)
+3. ThetaRelay Speculative Drafter + Target Verifier (`speculative_pass@1`)
 
 Also includes a Verifier Guardrail Stress Test where subtly buggy drafts (off-by-one errors,
 inverted conditions) are injected to verify that the target model rejects faulty drafts
@@ -12,9 +12,11 @@ and recovers `pass@1`!
 
 from __future__ import annotations
 
+import ast
 import copy
 import gzip
 import json
+import math
 import multiprocessing
 import time
 from dataclasses import dataclass
@@ -457,6 +459,187 @@ def evaluate_humaneval_functional_pass(
     return False, f"ProcessExitedWithCode:{proc.exitcode}"
 
 
+def mutate_python_code_ast(code_str: str) -> list[tuple[str, str]]:
+    """Generate single-point syntactic/semantic AST mutants of valid Python code.
+
+    Used for Verifier Honesty (RQ2) experiments: produces plausible-looking drafts
+    that parse cleanly (`ast.parse` succeeds) with a single flipped comparison,
+    arithmetic operator, boolean operator, or boundary constant.
+    """
+    extracted = _extract_python_code_blocks(code_str)
+    try:
+        base_tree = ast.parse(extracted)
+    except SyntaxError:
+        return []
+
+    cmp_flips: dict[type[ast.cmpop], tuple[str, type[ast.cmpop]]] = {
+        ast.Lt: ("lt_to_lte", ast.LtE),
+        ast.LtE: ("lte_to_lt", ast.Lt),
+        ast.Gt: ("gt_to_gte", ast.GtE),
+        ast.GtE: ("gte_to_gt", ast.Gt),
+        ast.Eq: ("eq_to_neq", ast.NotEq),
+        ast.NotEq: ("neq_to_eq", ast.Eq),
+        ast.In: ("in_to_notin", ast.NotIn),
+        ast.NotIn: ("notin_to_in", ast.In),
+        ast.Is: ("is_to_isnot", ast.IsNot),
+        ast.IsNot: ("isnot_to_is", ast.Is),
+    }
+    bin_flips: dict[type[ast.operator], tuple[str, type[ast.operator]]] = {
+        ast.Add: ("add_to_sub", ast.Sub),
+        ast.Sub: ("sub_to_add", ast.Add),
+        ast.Mult: ("mult_to_add", ast.Add),
+        ast.Mod: ("mod_to_floordiv", ast.FloorDiv),
+    }
+    bool_flips: dict[type[ast.boolop], tuple[str, type[ast.boolop]]] = {
+        ast.And: ("and_to_or", ast.Or),
+        ast.Or: ("or_to_and", ast.And),
+    }
+
+    mutants: list[tuple[str, str]] = []
+    seen_sources: set[str] = {ast.unparse(base_tree)}
+    nodes = list(ast.walk(base_tree))
+
+    for idx, node in enumerate(nodes):
+        if isinstance(node, ast.Compare) and node.ops:
+            op_type = type(node.ops[0])
+            if op_type in cmp_flips:
+                label, new_op_cls = cmp_flips[op_type]
+                tree_copy = copy.deepcopy(base_tree)
+                target_node = list(ast.walk(tree_copy))[idx]
+                if isinstance(target_node, ast.Compare):
+                    target_node.ops[0] = new_op_cls()
+                    src = ast.unparse(tree_copy)
+                    if src not in seen_sources:
+                        seen_sources.add(src)
+                        mutants.append((label, src))
+        elif isinstance(node, ast.BinOp):
+            bin_op_type = type(node.op)
+            if bin_op_type in bin_flips:
+                label, new_bin_cls = bin_flips[bin_op_type]
+                tree_copy = copy.deepcopy(base_tree)
+                target_node = list(ast.walk(tree_copy))[idx]
+                if isinstance(target_node, ast.BinOp):
+                    target_node.op = new_bin_cls()
+                    src = ast.unparse(tree_copy)
+                    if src not in seen_sources:
+                        seen_sources.add(src)
+                        mutants.append((label, src))
+        elif isinstance(node, ast.AugAssign):
+            aug_op_type = type(node.op)
+            if aug_op_type in bin_flips:
+                label, new_aug_cls = bin_flips[aug_op_type]
+                tree_copy = copy.deepcopy(base_tree)
+                target_node = list(ast.walk(tree_copy))[idx]
+                if isinstance(target_node, ast.AugAssign):
+                    target_node.op = new_aug_cls()
+                    src = ast.unparse(tree_copy)
+                    if src not in seen_sources:
+                        seen_sources.add(src)
+                        mutants.append((f"aug_{label}", src))
+        elif isinstance(node, ast.BoolOp):
+            bool_op_type = type(node.op)
+            if bool_op_type in bool_flips:
+                label, new_bool_cls = bool_flips[bool_op_type]
+                tree_copy = copy.deepcopy(base_tree)
+                target_node = list(ast.walk(tree_copy))[idx]
+                if isinstance(target_node, ast.BoolOp):
+                    target_node.op = new_bool_cls()
+                    src = ast.unparse(tree_copy)
+                    if src not in seen_sources:
+                        seen_sources.add(src)
+                        mutants.append((label, src))
+
+    return mutants
+
+
+def compute_paired_mcnemar_and_confusion(task_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute paired McNemar non-inferiority stats and the 2x2 Verifier Confusion Matrix.
+
+    Follows the experimental analysis protocol in `docs/how-to/evaluate-output-quality.md`:
+    - McNemar 2x2 table: `both_pass` (a), `baseline_only_pass` (b), `speculative_only_pass` (c),
+      `both_fail` (d), exact two-sided binomial p-value, and 95% confidence interval for (c - b)/N.
+    - Verifier 2x2 confusion matrix:
+      - `true_accepts` (draft passes & verifier accepts) -> True Accept Rate (TAR)
+      - `false_accepts` (draft fails & verifier accepts) -> False Accept Rate (FAR / Sycophancy)
+      - `true_rejects` (draft fails & verifier rejects) -> True Reject Rate (TRR)
+      - `false_rejects` (draft passes & verifier rejects) -> False Reject Rate (FRR / Over-strict)
+    """
+    paired = [r for r in task_rows if "baseline_pass_at_1" in r and "speculative_pass_at_1" in r]
+    n = len(paired)
+    if n == 0:
+        return {}
+
+    a = sum(1 for r in paired if r["baseline_pass_at_1"] and r["speculative_pass_at_1"])
+    b = sum(1 for r in paired if r["baseline_pass_at_1"] and not r["speculative_pass_at_1"])
+    c = sum(1 for r in paired if not r["baseline_pass_at_1"] and r["speculative_pass_at_1"])
+    d = sum(1 for r in paired if not r["baseline_pass_at_1"] and not r["speculative_pass_at_1"])
+
+    # Exact two-sided binomial McNemar test on discordant pairs (b, c)
+    discordant = b + c
+    if discordant == 0:
+        p_val = 1.0
+    else:
+        k = min(b, c)
+        tail = sum(math.comb(discordant, i) for i in range(k + 1)) / (2**discordant)
+        p_val = min(1.0, 2.0 * tail)
+
+    # Paired difference (spec - base) and Wald/Agresti-Min 95% CI
+    diff = (c - b) / n
+    se = math.sqrt(max(0.0, (b + c) - ((c - b) ** 2) / n)) / n
+    ci_low = max(-1.0, diff - 1.96 * se)
+    ci_high = min(1.0, diff + 1.96 * se)
+
+    # Verifier 2x2 Confusion Matrix (Draft Functional Pass vs Verifier Accepted)
+    tp_accept = sum(1 for r in paired if r.get("local_pass_at_1") and r.get("target_accepted"))
+    fp_accept = sum(1 for r in paired if not r.get("local_pass_at_1") and r.get("target_accepted"))
+    tn_reject = sum(
+        1 for r in paired if not r.get("local_pass_at_1") and not r.get("target_accepted")
+    )
+    fn_reject = sum(1 for r in paired if r.get("local_pass_at_1") and not r.get("target_accepted"))
+    recovered_after_reject = sum(
+        1
+        for r in paired
+        if not r.get("local_pass_at_1")
+        and not r.get("target_accepted")
+        and r.get("speculative_pass_at_1")
+    )
+
+    good_drafts = tp_accept + fn_reject
+    bad_drafts = fp_accept + tn_reject
+
+    return {
+        "mcnemar_paired_test": {
+            "n_pairs": n,
+            "both_pass_a": a,
+            "baseline_only_pass_b": b,
+            "speculative_only_pass_c": c,
+            "both_fail_d": d,
+            "delta_accuracy_pct": round(diff * 100.0, 2),
+            "ci_95_low_pct": round(ci_low * 100.0, 2),
+            "ci_95_high_pct": round(ci_high * 100.0, 2),
+            "exact_p_value": round(p_val, 4),
+        },
+        "verifier_confusion_matrix": {
+            "true_accepts": tp_accept,
+            "false_accepts_sycophancy": fp_accept,
+            "true_rejects": tn_reject,
+            "false_rejects_overstrict": fn_reject,
+            "true_accept_rate_pct": (
+                round((tp_accept / good_drafts) * 100.0, 1) if good_drafts > 0 else None
+            ),
+            "false_reject_rate_pct": (
+                round((fn_reject / good_drafts) * 100.0, 1) if good_drafts > 0 else None
+            ),
+            "false_accept_rate_pct": (
+                round((fp_accept / bad_drafts) * 100.0, 1) if bad_drafts > 0 else None
+            ),
+            "post_rejection_recovery_rate_pct": (
+                round((recovered_after_reject / tn_reject) * 100.0, 1) if tn_reject > 0 else None
+            ),
+        },
+    }
+
+
 async def run_humaneval_benchmark(
     config: SpeculativeConfig | None = None,
     problems: list[HumanEvalProblem] | None = None,
@@ -468,7 +651,7 @@ async def run_humaneval_benchmark(
     """Run the standard HumanEval coding benchmark comparing:
     - Local Drafter `pass@1`
     - Target Baseline `pass@1` & latency
-    - ThetaCode Speculative (`<ACCEPT/>` verification + rewrite fallback) `pass@1` & latency
+    - ThetaRelay Speculative (`<ACCEPT/>` verification + rewrite fallback) `pass@1` & latency
     - Buggy-Draft Guardrail Stress Test (verifier rejects subtly buggy drafts and recovers `pass@1`)
     """
     cfg = config or SpeculativeConfig.from_env()
@@ -480,7 +663,7 @@ async def run_humaneval_benchmark(
     import os
 
     target_api_key = (
-        os.environ.get("THETACODE_TARGET_API_KEY")
+        os.environ.get("THETARELAY_TARGET_API_KEY")
         or os.environ.get("OPENROUTER_API_KEY")
         or os.environ.get("OPENAI_API_KEY")
         or cfg.local_api_key
@@ -729,6 +912,7 @@ async def run_humaneval_benchmark(
                 )
 
             n = max(1, len(suite))
+            paired_stats = compute_paired_mcnemar_and_confusion(task_rows)
             target_summary = {
                 "target_model": target_model,
                 "warmup_target_ms": warmup_target_ms,
@@ -751,6 +935,7 @@ async def run_humaneval_benchmark(
                     if total_base_out_tok > 0
                     else 0.0
                 ),
+                **paired_stats,
                 "buggy_draft_guardrail_tests": guard_results,
             }
 

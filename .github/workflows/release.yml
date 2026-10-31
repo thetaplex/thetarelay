@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/thetacode
+      url: https://pypi.org/p/thetarelay
     permissions:
       id-token: write
     steps:

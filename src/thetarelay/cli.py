@@ -1,4 +1,4 @@
-"""CLI entry point for ThetaCode speculative proxy."""
+"""CLI entry point for ThetaRelay speculative proxy."""
 
 from __future__ import annotations
 
@@ -24,15 +24,15 @@ from .proxy import create_app
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="thetacode",
+        prog="thetarelay",
         description=(
-            "ThetaCode: Speculative Local-to-Frontier Proxy & Headroom Extension for Coding Agents"
+            "ThetaRelay: Speculative Local-to-Frontier Proxy & Headroom Extension for Coding Agents"
         ),
     )
     subparsers = parser.add_subparsers(dest="command")
 
-    # `thetacode proxy`
-    proxy_parser = subparsers.add_parser("proxy", help="Start the standalone ThetaCode proxy")
+    # `thetarelay proxy`
+    proxy_parser = subparsers.add_parser("proxy", help="Start the standalone ThetaRelay proxy")
     proxy_parser.add_argument("--host", default=None, help="Bind host (default: 127.0.0.1)")
     proxy_parser.add_argument("--port", type=int, default=None, help="Bind port (default: 8788)")
     proxy_parser.add_argument(
@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
 
-    # `thetacode bench`
+    # `thetarelay bench`
     bench_parser = subparsers.add_parser(
         "bench",
         help="Run the deterministic A/B benchmark suite (speed, efficiency, accuracy)",
@@ -93,7 +93,7 @@ def main(argv: list[str] | None = None) -> None:
         help="Override speculative verification strategy",
     )
 
-    # `thetacode eval`
+    # `thetarelay eval`
     eval_parser = subparsers.add_parser(
         "eval",
         help="Evaluate a live local draft model (Ollama/MLX/vLLM) on coding agent tasks",
@@ -215,7 +215,7 @@ def main(argv: list[str] | None = None) -> None:
     print(
         f"""
 ╔══════════════════════════════════════════════════════════════════════╗
-║                    THETACODE SPECULATIVE PROXY                       ║
+║                    THETARELAY SPECULATIVE PROXY                       ║
 ╠══════════════════════════════════════════════════════════════════════╣
 ║  Listening:        http://{cfg.host}:{cfg.port:<5}                                ║
 ║  Local Drafter:    {cfg.local_model:<49} ║

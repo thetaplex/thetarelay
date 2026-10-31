@@ -1,4 +1,4 @@
-"""Configuration for ThetaCode speculative proxy and Headroom extension."""
+"""Configuration for ThetaRelay speculative proxy and Headroom extension."""
 
 from __future__ import annotations
 
@@ -49,14 +49,16 @@ class SpeculativeConfig:
     local_base_url: str = "http://127.0.0.1:11434/v1"
     local_model: str = "qwen2.5-coder:7b"
     local_api_key: str = "local"
-    local_timeout_seconds: float = 8.0
+    local_timeout_seconds: float = 5.0
     local_max_tokens: int = 384
     local_temperature: float = 0.0
     local_disable_thinking: bool = True
     local_concise_draft_instructions: bool = True
 
     # Context window trimming for the local model so prefill stays sub-second
-    local_max_context_chars: int = 24000
+    local_max_context_chars: int = 64000
+    # Size the window per conversation by measured read speed (proxy and Headroom only)
+    local_adaptive_context: bool = True
     local_recent_messages_limit: int = 10
 
     # Speculative strategy:
@@ -86,36 +88,37 @@ class SpeculativeConfig:
 
     @classmethod
     def from_env(cls) -> SpeculativeConfig:
-        skip_raw = os.environ.get("THETACODE_SKIP_MODELS", "haiku,mini,nano,flash")
+        skip_raw = os.environ.get("THETARELAY_SKIP_MODELS", "haiku,mini,nano,flash")
         skip_models = tuple(s.strip().lower() for s in skip_raw.split(",") if s.strip())
         return cls(
-            host=os.environ.get("THETACODE_HOST", "127.0.0.1"),
-            port=_env_int("THETACODE_PORT", 8788),
+            host=os.environ.get("THETARELAY_HOST", "127.0.0.1"),
+            port=_env_int("THETARELAY_PORT", 8788),
             anthropic_upstream_url=os.environ.get(
-                "THETACODE_ANTHROPIC_UPSTREAM", "https://api.anthropic.com"
+                "THETARELAY_ANTHROPIC_UPSTREAM", "https://api.anthropic.com"
             ).rstrip("/"),
             openai_upstream_url=os.environ.get(
-                "THETACODE_OPENAI_UPSTREAM", "https://api.openai.com"
+                "THETARELAY_OPENAI_UPSTREAM", "https://api.openai.com"
             ).rstrip("/"),
             local_base_url=os.environ.get(
-                "THETACODE_LOCAL_BASE_URL", "http://127.0.0.1:11434/v1"
+                "THETARELAY_LOCAL_BASE_URL", "http://127.0.0.1:11434/v1"
             ).rstrip("/"),
-            local_model=os.environ.get("THETACODE_LOCAL_MODEL", "qwen2.5-coder:7b"),
-            local_api_key=os.environ.get("THETACODE_LOCAL_API_KEY", "local"),
-            local_timeout_seconds=_env_float("THETACODE_LOCAL_TIMEOUT", 8.0),
-            local_max_tokens=_env_int("THETACODE_LOCAL_MAX_TOKENS", 384),
-            local_temperature=_env_float("THETACODE_LOCAL_TEMPERATURE", 0.0),
-            local_disable_thinking=_env_bool("THETACODE_LOCAL_DISABLE_THINKING", True),
-            local_concise_draft_instructions=_env_bool("THETACODE_LOCAL_CONCISE_DRAFT", True),
-            local_max_context_chars=_env_int("THETACODE_LOCAL_MAX_CONTEXT_CHARS", 24000),
-            local_recent_messages_limit=_env_int("THETACODE_LOCAL_RECENT_MESSAGES", 10),
-            strategy=os.environ.get("THETACODE_STRATEGY", "auto").strip().lower(),
-            selective_speculation=_env_bool("THETACODE_SELECTIVE", True),
-            min_prompt_chars_for_draft=_env_int("THETACODE_MIN_PROMPT_CHARS", 15),
-            enable_headroom_middleware=_env_bool("THETACODE_HEADROOM_MIDDLEWARE", True),
-            accept_token=os.environ.get("THETACODE_ACCEPT_TOKEN", "<ACCEPT/>").strip(),
-            estimated_input_usd_per_million=_env_float("THETACODE_INPUT_USD_PER_M", 3.0),
-            estimated_output_usd_per_million=_env_float("THETACODE_OUTPUT_USD_PER_M", 15.0),
-            estimated_frontier_output_tps=_env_float("THETACODE_FRONTIER_OUTPUT_TPS", 65.0),
+            local_model=os.environ.get("THETARELAY_LOCAL_MODEL", "qwen2.5-coder:7b"),
+            local_api_key=os.environ.get("THETARELAY_LOCAL_API_KEY", "local"),
+            local_timeout_seconds=_env_float("THETARELAY_LOCAL_TIMEOUT", 5.0),
+            local_max_tokens=_env_int("THETARELAY_LOCAL_MAX_TOKENS", 384),
+            local_temperature=_env_float("THETARELAY_LOCAL_TEMPERATURE", 0.0),
+            local_disable_thinking=_env_bool("THETARELAY_LOCAL_DISABLE_THINKING", True),
+            local_concise_draft_instructions=_env_bool("THETARELAY_LOCAL_CONCISE_DRAFT", True),
+            local_max_context_chars=_env_int("THETARELAY_LOCAL_MAX_CONTEXT_CHARS", 64000),
+            local_adaptive_context=_env_bool("THETARELAY_LOCAL_ADAPTIVE_CONTEXT", True),
+            local_recent_messages_limit=_env_int("THETARELAY_LOCAL_RECENT_MESSAGES", 10),
+            strategy=os.environ.get("THETARELAY_STRATEGY", "auto").strip().lower(),
+            selective_speculation=_env_bool("THETARELAY_SELECTIVE", True),
+            min_prompt_chars_for_draft=_env_int("THETARELAY_MIN_PROMPT_CHARS", 15),
+            enable_headroom_middleware=_env_bool("THETARELAY_HEADROOM_MIDDLEWARE", True),
+            accept_token=os.environ.get("THETARELAY_ACCEPT_TOKEN", "<ACCEPT/>").strip(),
+            estimated_input_usd_per_million=_env_float("THETARELAY_INPUT_USD_PER_M", 3.0),
+            estimated_output_usd_per_million=_env_float("THETARELAY_OUTPUT_USD_PER_M", 15.0),
+            estimated_frontier_output_tps=_env_float("THETARELAY_FRONTIER_OUTPUT_TPS", 65.0),
             skip_models=skip_models,
         )

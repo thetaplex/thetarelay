@@ -1,4 +1,4 @@
-# thetacode
+# thetarelay
 
 Open-source CLI and Headroom proxy extension (PyPI) that performs local-to-frontier speculative drafting for coding agents (Pi, OpenCode, Cursor, Claude Code). Part of the ThetaPlex organisation.
 

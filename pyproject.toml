@@ -1,5 +1,5 @@
 [project]
-name = "thetacode"
+name = "thetarelay"
 version = "0.1.0"
 description = "Local-to-Frontier Speculative Drafting Proxy & Headroom Extension for Coding Agents (Pi, OpenCode, Cursor, Claude Code)"
 readme = "README.md"
@@ -38,10 +38,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/thetaplex/thetacode"
-Repository = "https://github.com/thetaplex/thetacode"
-Issues = "https://github.com/thetaplex/thetacode/issues"
-Changelog = "https://github.com/thetaplex/thetacode/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/thetaplex/thetarelay"
+Repository = "https://github.com/thetaplex/thetarelay"
+Issues = "https://github.com/thetaplex/thetarelay/issues"
+Changelog = "https://github.com/thetaplex/thetarelay/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 headroom = [
@@ -57,18 +57,18 @@ dev = [
 ]
 
 [project.scripts]
-thetacode = "thetacode.cli:main"
+thetarelay = "thetarelay.cli:main"
 
-# Native plugin registration for `headroom proxy --proxy-extension thetacode`
+# Native plugin registration for `headroom proxy --proxy-extension thetarelay`
 [project.entry-points."headroom.proxy_extension"]
-thetacode = "thetacode.headroom_ext:install"
+thetarelay = "thetarelay.headroom_ext:install"
 
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/thetacode"]
+packages = ["src/thetarelay"]
 
 [tool.ruff]
 line-length = 100
