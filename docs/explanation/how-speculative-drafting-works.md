@@ -17,7 +17,8 @@ the draft as the response.
 3. thetarelay decides if the request is eligible for a draft. It does not draft for bypass headers,
    small models, short prompts, or requests that already contain a draft.
 4. thetarelay converts the request to an OpenAI Chat Completions request for the local model. It
-   sends only the recent messages, a limited number of characters, and a maximum of 16 tools.
+   adds the drafting instructions as a separate system message and sends a maximum of 16 tools.
+   It sends a window of the conversation, not the full conversation (see below).
 5. The local model returns text, tool calls, or both.
 6. thetarelay adds the draft to the request and sends it to the frontier model.
 7. thetarelay examines the response and returns the draft or the frontier response.
@@ -66,6 +67,28 @@ Headroom's `CacheAligner` keeps the system prompt and the earlier messages stabl
 the draft at the end of the last user message only. Thus the system prompt and all earlier
 messages stay the same, and the cache continues to work. The draft adds uncached input tokens
 only.
+
+## How thetarelay sizes the local context
+
+The local model must read its prompt before it can write a draft. On a laptop, this takes
+approximately 1 second for each 1 300 characters, so a long conversation can use all of
+`THETARELAY_LOCAL_TIMEOUT`.
+
+Local servers such as Ollama also keep a prompt cache. If a request starts with exactly the same
+messages as the previous request, the server reads only the new messages. thetarelay uses this:
+
+- The window keeps the same first message from turn to turn, and new messages are added at the
+  end. Each draft then costs only the time to read the new text.
+- The drafting instructions are in a system message at the start. If they were added to the last
+  user message, that message would change on the next turn and the cache would stop at it.
+- If the new text cannot be read before the timeout, or the window becomes larger than
+  `THETARELAY_LOCAL_MAX_CONTEXT_CHARS`, the window starts again from the newest messages that the
+  local model can read in time.
+- thetarelay measures the read speed on each draft. A slower model or computer gets a smaller
+  window.
+
+This applies to `thetarelay proxy` and the Headroom extension. `eval` and `bench` use a fixed
+window. To use the fixed window in the proxy, set `THETARELAY_LOCAL_ADAPTIVE_CONTEXT=false`.
 
 ## Streaming
 

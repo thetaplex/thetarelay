@@ -18,6 +18,9 @@ This list applies to version 0.1.0 and the `feat/speculative-proxy` branch. Last
 | thetarelay does not validate `THETARELAY_STRATEGY`. | A value that is not valid causes the same problem as `prediction`. |
 | The Headroom extension calls the local model synchronously. | Each drafted turn can stop the Headroom process for up to `THETARELAY_LOCAL_TIMEOUT` seconds. |
 | The Headroom extension reads environment variables only. | It does not use the configuration that Headroom gives to it. |
+| The adaptive context keeps its state in memory. | After the proxy restarts, the first draft of each conversation reads the full window. |
+| The adaptive context does not include the system prompt in its time estimate. | The system prompt can use up to one third of `THETARELAY_LOCAL_MAX_CONTEXT_CHARS`. On the first draft of a conversation, a long system prompt can make the draft exceed `THETARELAY_LOCAL_TIMEOUT`. |
+| The adaptive context removes old messages, not the start of a large message. | If one tool result is larger than the window, the local model sees only its end. For a large diff, this can remove the file names. |
 | Token counts are estimates. | thetarelay uses characters / 4 when the local API does not return `usage`. |
 
 ## Metrics and benchmarks

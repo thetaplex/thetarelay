@@ -26,7 +26,7 @@ do not change, so the provider prompt cache continues to work.
 
 Prerequisites:
 
-- Python 3.11 or later
+- Python 3.13 or later
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - [just](https://just.systems/man/en/packages.html), for a source checkout
 - A local model server, for example [Ollama](https://ollama.com/download)
