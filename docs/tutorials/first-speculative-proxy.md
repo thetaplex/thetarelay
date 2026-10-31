@@ -97,6 +97,10 @@ information, see [Cost and latency model](../explanation/cost-and-latency-model.
 If `x-thetarelay-accepted` is `true`, the response body contains the local draft. If it is
 `false`, the response body contains the normal frontier response.
 
+On multi-turn conversations, ThetaRelay's adaptive draft context keeps the draft window prefix
+stable. The local model server reuses its prompt cache on subsequent requests, making later
+drafts in the same conversation faster.
+
 ## Step 6: Read the statistics
 
 1. Get the statistics:

@@ -1,7 +1,8 @@
 # How to run thetarelay with Headroom
 
 [Headroom](https://github.com/chopratejas/headroom) (`headroom-ai`) compresses the prompt context.
-thetarelay then drafts on the smaller context. Use one of the three modes below.
+thetarelay then sizes the local draft window adaptively on the compressed messages, preserving
+prompt cache across conversation turns. Use one of the three modes below.
 
 | Mode | Processes | Use it when |
 |---|---|---|
@@ -36,8 +37,11 @@ All examples use Ollama at `http://127.0.0.1:11434/v1` with the model `gemma4:e4
    curl http://127.0.0.1:8787/thetarelay/stats
    ```
 
-In this mode, thetarelay reads its settings from environment variables only. It does not read the
-Headroom configuration. Command-line options of `thetarelay proxy` have no effect.
+In this mode, thetarelay reads its settings from environment variables only (including
+`THETARELAY_LOCAL_ADAPTIVE_CONTEXT`, `THETARELAY_LOCAL_TIMEOUT`, and
+`THETARELAY_LOCAL_MAX_CONTEXT_CHARS`). It does not read the Headroom configuration.
+Command-line options of `thetarelay proxy` have no effect. The extension maintains its own
+adaptive draft window across turns, so local prompt cache is reused for consecutive requests.
 
 ## Mode 2: Run the standalone proxy with embedded Headroom middleware
 

@@ -28,11 +28,16 @@ With the defaults: (218 / 65) s = 3354 ms. 260 / 3354 = 7.8 %. Thus drafting sav
 frontier model accepts more than approximately 8 % of drafts.
 
 The 260 ms value is optimistic. On an Apple silicon Mac with `gemma4:e4b-mlx`, a draft took
-1.6 s on average in a 12-turn agent conversation, and approximately 4 s when the local prompt
-cache could not be used. With *T*<sub>draft</sub> = 1 600 ms, the break-even is
-1600 / 3354 = 47.7 %. For turns that end with a short tool call (*N*<sub>out</sub> ≈ 60), drafting
-does not save time at any acceptance rate. Measure *T*<sub>draft</sub> with
+1.6 s on average in a 12-turn agent conversation with adaptive context and warm prompt cache,
+and approximately 4 s when the local prompt cache could not be used. With *T*<sub>draft</sub> = 1 600 ms,
+the break-even is 1600 / 3354 = 47.7 %. For turns that end with a short tool call (*N*<sub>out</sub> ≈ 60),
+drafting does not save time at any acceptance rate. Measure *T*<sub>draft</sub> with
 `p50_local_draft_latency_ms` in `/thetarelay/stats`.
+
+Adaptive drafting keeps *T*<sub>draft</sub> bounded by allocating 80 % of `THETARELAY_LOCAL_TIMEOUT`
+to reading new characters and adapting the window to the measured read speed. If the local server
+takes longer than `THETARELAY_LOCAL_TIMEOUT` (default 5.0 s), the draft is skipped and the request
+falls back to the unmodified frontier model, capping latency penalty at the timeout.
 
 ## Cost break-even
 
@@ -48,13 +53,19 @@ The cost break-even does not depend on *T*<sub>draft</sub>. With the `bench` val
 than the latency break-even, because each draft adds more tokens than a typical response. With
 measured draft times, the latency break-even is usually the higher one.
 
-## Why the prefix cache is important
+## Why prefix caches are important
 
-The cost model assumes that the system prompt and the earlier messages stay in the provider
-cache. If thetarelay changed the earlier messages, the full prompt would become uncached input. In
-an 80 000-token context, this would cost much more than the draft saves. For this reason,
-thetarelay changes only the end of the last user message. See
-[How speculative drafting works](how-speculative-drafting-works.md).
+Prefix caching operates on two levels:
+
+1. **Provider prompt cache:** The cost model assumes that the system prompt and earlier messages
+   stay in the provider cache. If thetarelay changed earlier messages, the full prompt would become
+   uncached input. In an 80 000-token context, this would cost much more than the draft saves. For
+   this reason, thetarelay changes only the end of the last user message.
+2. **Local model prompt cache:** The latency model assumes that the local draft server reuses its
+   prompt cache across conversation turns. The adaptive draft window keeps the conversation prefix
+   identical across turns and puts drafting instructions in a separate leading system message. This
+   prevents cold prompt reprocessing, keeping *T*<sub>draft</sub> low. See
+   [How speculative drafting works](how-speculative-drafting-works.md).
 
 ## The `prediction` strategy
 

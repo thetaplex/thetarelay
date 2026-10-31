@@ -22,6 +22,10 @@ writes 2 tokens in place of the full response.
 ThetaRelay changes only the end of the last user message. The system prompt and earlier messages
 do not change, so the provider prompt cache continues to work.
 
+ThetaRelay also adaptively sizes the local draft context for each conversation
+(`THETARELAY_LOCAL_ADAPTIVE_CONTEXT`). It keeps the start of the draft window stable so the local
+server reuses its prompt cache, reading only new messages on each turn.
+
 ## Install
 
 Prerequisites:
@@ -105,8 +109,10 @@ Frontier models: `anthropic/claude-opus-4.5` (5 USD input / 25 USD output per 10
 | Drafts with injected bugs (HumanEval) and SQL injection | `claude-opus-4.5`, `gpt-5.4`, `qwen3.8:27b-mlx` (local) | 0 of 7 | — | — | — | 6 of 6 HumanEval tasks recovered |
 
 In the agent-trace tests, the wall-clock time increased because the local model read the full
-context on each turn. These results are from before the adaptive draft context
-(`THETARELAY_LOCAL_ADAPTIVE_CONTEXT`).
+context on each turn. With adaptive drafting enabled (`THETARELAY_LOCAL_ADAPTIVE_CONTEXT`),
+ThetaRelay keeps the conversation prefix stable and bounds new read volume to the local timeout:
+in a 12-turn replay on Ollama with `gemma4:e4b-mlx`, total draft time fell from 31.6 s to 19.7 s
+with zero timeouts, and mean draft time fell from 4.2 s to 2.4 s.
 `thetarelay bench` uses simulated values. It does not produce these results.
 
 ## Tested models

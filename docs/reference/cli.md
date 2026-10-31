@@ -29,10 +29,15 @@ Starts the standalone HTTP proxy. The proxy writes a banner to standard error an
 
 thetarelay removes a trailing `/` from all URL options.
 
+Additional proxy behavior, including adaptive drafting (`THETARELAY_LOCAL_ADAPTIVE_CONTEXT`),
+draft timeouts (`THETARELAY_LOCAL_TIMEOUT`), and character ceilings
+(`THETARELAY_LOCAL_MAX_CONTEXT_CHARS`), is configured through [environment variables](configuration.md).
+
 ## `thetarelay bench`
 
 Runs the deterministic A/B benchmark. The benchmark uses `httpx.MockTransport` and does not use
-the network. It replaces the local and upstream URLs with test URLs.
+the network. It replaces the local and upstream URLs with test URLs. `bench` evaluates isolated
+scenarios and does not maintain multi-turn adaptive context state.
 
 | Option | Value | Default |
 |---|---|---|
@@ -43,7 +48,8 @@ the network. It replaces the local and upstream URLs with test URLs.
 
 ## `thetarelay eval`
 
-Evaluates a live local model. The output is always JSON.
+Evaluates a live local model. The output is always JSON. `eval` tests individual benchmark
+problems with a fixed context window without multi-turn adaptive context tracking.
 
 | Option | Value | Default |
 |---|---|---|

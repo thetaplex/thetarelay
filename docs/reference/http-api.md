@@ -41,7 +41,7 @@ all other endpoints.
 |---|---|---|
 | `x-thetarelay-drafted` | `true`, `false` | Always. |
 | `x-thetarelay-mode` | `none`, `accept_swap`, `openai_prediction`, `context_only`, `prediction` | Always. `none` means no draft. |
-| `x-thetarelay-draft-ms` | Number, one decimal place | Always. Draft time in milliseconds. |
+| `x-thetarelay-draft-ms` | Number, one decimal place | Always. Draft time in milliseconds. With adaptive context enabled, consecutive turns benefit from local prompt cache reuse and show lower latency. |
 | `x-thetarelay-accepted` | `true`, `false` | Non-streaming `accept_swap` responses with status 200. |
 | `x-thetarelay-tokens-saved` | Integer | Non-streaming responses where the draft was accepted. |
 
@@ -83,8 +83,8 @@ The `metrics` object contains the counters since the process started:
 | `estimated_usd_saved` | Value of the saved output tokens, in USD. |
 | `estimated_input_usd_cost` | Cost of the added input tokens, in USD. |
 | `estimated_net_usd_saved` | `estimated_usd_saved` − `estimated_input_usd_cost`. |
-| `avg_local_draft_latency_ms` | Mean draft time. |
-| `p50_local_draft_latency_ms`, `p95_local_draft_latency_ms` | Percentiles of draft time. |
+| `avg_local_draft_latency_ms` | Mean draft time. Multi-turn sessions with adaptive context benefit from local prompt cache hits, lowering this average. |
+| `p50_local_draft_latency_ms`, `p95_local_draft_latency_ms` | Percentiles of draft time. Useful for tuning `THETARELAY_LOCAL_TIMEOUT`. |
 | `avg_frontier_latency_ms` | Mean frontier time. Non-streaming requests only. |
 | `p50_end_to_end_latency_ms`, `p95_end_to_end_latency_ms` | Percentiles of draft time + frontier time. Non-streaming requests only. |
 | `estimated_net_latency_saved_ms` | Avoided decode time − draft time, summed. Rejected drafts count as negative. |
