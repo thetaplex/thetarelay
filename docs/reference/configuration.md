@@ -59,4 +59,4 @@ These values affect the statistics only. They do not change the requests.
 
 | Variable | Description |
 |---|---|
-| `THETARELAY_TARGET_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY` | `eval --benchmark humaneval` sends the first variable that has a value to the target model as a bearer token. If none has a value, it sends `THETARELAY_LOCAL_API_KEY`. `eval --benchmark scenarios` does not read these variables. See [Known limitations](known-limitations.md). |
+| `THETARELAY_TARGET_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY` | With `--target-model`, `eval` sends the first variable that has a value to the target model as a bearer token. If none has a value, it sends `THETARELAY_LOCAL_API_KEY` only when the target URL is the local URL; otherwise it stops with an error. See [Known limitations](known-limitations.md). |

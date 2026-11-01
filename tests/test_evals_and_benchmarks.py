@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from thetarelay.config import SpeculativeConfig
+from thetarelay.config import SpeculativeConfig, resolve_target_api_key
 from thetarelay.evals import (
     EvalSuite,
     format_benchmark_report_table,
@@ -329,3 +329,34 @@ def test_ast_mutation_and_mcnemar_confusion_matrix() -> None:
     assert cm["true_accept_rate_pct"] == 50.0
     assert cm["false_accept_rate_pct"] == 50.0
     assert cm["post_rejection_recovery_rate_pct"] == 100.0
+
+
+_TARGET_KEY_VARS = ("THETARELAY_TARGET_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY")
+
+
+def test_target_api_key_prefers_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in _TARGET_KEY_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "target-key")
+    cfg = SpeculativeConfig(local_api_key="local-key")
+    assert resolve_target_api_key(cfg, "https://openrouter.ai/api/v1") == "target-key"
+
+
+def test_target_api_key_falls_back_to_local_key_for_local_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in _TARGET_KEY_VARS:
+        monkeypatch.delenv(name, raising=False)
+    cfg = SpeculativeConfig(local_base_url="http://127.0.0.1:11434/v1", local_api_key="local-key")
+    assert resolve_target_api_key(cfg, None) == "local-key"
+    assert resolve_target_api_key(cfg, "http://127.0.0.1:11434/v1/") == "local-key"
+
+
+def test_target_api_key_never_sends_local_key_to_other_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in _TARGET_KEY_VARS:
+        monkeypatch.delenv(name, raising=False)
+    cfg = SpeculativeConfig(local_api_key="local-key")
+    with pytest.raises(ValueError, match="no target API key is set"):
+        resolve_target_api_key(cfg, "https://openrouter.ai/api/v1")

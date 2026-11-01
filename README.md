@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/thetaplex/thetarelay/actions/workflows/ci.yml/badge.svg)](https://github.com/thetaplex/thetarelay/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/thetarelay)](https://pypi.org/p/thetarelay)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/thetaplex/thetarelay/blob/main/LICENSE)
 
 ThetaRelay is a speculative drafting proxy. A local model writes a draft of each response. The
 frontier model then checks the draft. If the draft is correct, the frontier model writes only
@@ -98,7 +98,7 @@ In a source checkout, use `just run` in place of `thetarelay`, for example `just
 
 Measured on 2026-10-30 on an Apple silicon Mac. Draft model: `gemma4:e4b-mlx` (Ollama, MLX).
 Frontier models: `anthropic/claude-opus-4.5` (5 USD input / 25 USD output per 10<sup>6</sup> tokens) and `openai/gpt-5.4` (2.50 USD input / 15 USD output per 10<sup>6</sup> tokens) through OpenRouter. Raw data:
-[`benchmarks/results/live_benchmark_results_2026_10_30.json`](benchmarks/results/live_benchmark_results_2026_10_30.json).
+[`benchmarks/results/live_benchmark_results_2026_10_30.json`](https://github.com/thetaplex/thetarelay/blob/main/benchmarks/results/live_benchmark_results_2026_10_30.json).
 
 | Test | Frontier model | Drafts accepted | Frontier output tokens | Cost (USD) | Wall-clock time | Accuracy |
 |---|---|---|---|---|---|---|
@@ -121,23 +121,23 @@ Confirmed frontier models: `anthropic/claude-opus-4.5` and `openai/gpt-5.4`. Con
 verifier: `qwen3.8:27b-mlx`. All results use the local drafter `gemma4:e4b-mlx`.
 
 Some frontier models accept drafts with bugs. Do not use a frontier model that is not confirmed
-before you test it. See [Tested models](docs/reference/tested-models.md).
+before you test it. See [Tested models](https://github.com/thetaplex/thetarelay/blob/main/docs/reference/tested-models.md).
 
 ## Documentation
 
-- [Tutorial: run your first speculative proxy](docs/tutorials/first-speculative-proxy.md)
-- [How-to guides](docs/README.md#how-to-guides)
-- [Reference: CLI, configuration, HTTP API](docs/README.md#reference)
-- [How speculative drafting works](docs/explanation/how-speculative-drafting-works.md)
-- [Known limitations](docs/reference/known-limitations.md)
+- [Tutorial: run your first speculative proxy](https://github.com/thetaplex/thetarelay/blob/main/docs/tutorials/first-speculative-proxy.md)
+- [How-to guides](https://github.com/thetaplex/thetarelay/blob/main/docs/README.md#how-to-guides)
+- [Reference: CLI, configuration, HTTP API](https://github.com/thetaplex/thetarelay/blob/main/docs/README.md#reference)
+- [How speculative drafting works](https://github.com/thetaplex/thetarelay/blob/main/docs/explanation/how-speculative-drafting-works.md)
+- [Known limitations](https://github.com/thetaplex/thetarelay/blob/main/docs/reference/known-limitations.md)
 
 ## Links
 
-- [Changelog](CHANGELOG.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security policy](SECURITY.md)
-- [Code of conduct](CODE_OF_CONDUCT.md)
+- [Changelog](https://github.com/thetaplex/thetarelay/blob/main/CHANGELOG.md)
+- [Contributing](https://github.com/thetaplex/thetarelay/blob/main/CONTRIBUTING.md)
+- [Security policy](https://github.com/thetaplex/thetarelay/blob/main/SECURITY.md)
+- [Code of conduct](https://github.com/thetaplex/thetarelay/blob/main/CODE_OF_CONDUCT.md)
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache License 2.0. See [LICENSE](https://github.com/thetaplex/thetarelay/blob/main/LICENSE) and [NOTICE](https://github.com/thetaplex/thetarelay/blob/main/NOTICE).

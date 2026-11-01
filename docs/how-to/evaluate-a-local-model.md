@@ -44,6 +44,11 @@ server that has memory for one model only.
 
 ## Measure functional accuracy with HumanEval
 
+> [!WARNING]
+> The HumanEval benchmark runs model-generated code with `exec()` in a child process. The only
+> protection is a 3-second time limit. The code can read and change files and can use the
+> network. Run it in a container or a virtual machine.
+
 1. Run the 10 built-in problems:
 
    ```sh
@@ -61,7 +66,9 @@ server that has memory for one model only.
 3. Read `local_pass_at_1_pct`. With a target model, read `target_comparison` also.
 
 For a hosted target, set `THETARELAY_TARGET_API_KEY` (or `OPENROUTER_API_KEY` or
-`OPENAI_API_KEY`) to the key of the target provider. See [Known limitations](../reference/known-limitations.md).
+`OPENAI_API_KEY`) to the key of the target provider. If `--target-url` is not the local URL and
+none of these variables has a value, `eval` stops with an error. It does not send
+`THETARELAY_LOCAL_API_KEY` to a different server. See [Known limitations](../reference/known-limitations.md).
 
 ## Use your own scenarios
 

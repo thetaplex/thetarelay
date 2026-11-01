@@ -1,7 +1,6 @@
 # Reference: known limitations
 
-This list applies to version 0.1.0 and the `feat/speculative-proxy` branch. Last review:
-2026-10-30.
+This list applies to version 0.1.0. Last review: 2026-10-31.
 
 ## Security
 

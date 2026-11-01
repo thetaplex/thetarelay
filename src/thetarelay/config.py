@@ -133,3 +133,30 @@ class SpeculativeConfig:
             estimated_frontier_output_tps=_env_float("THETARELAY_FRONTIER_OUTPUT_TPS", 65.0),
             skip_models=skip_models,
         )
+
+
+_TARGET_API_KEY_ENV_VARS = ("THETARELAY_TARGET_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY")
+
+
+def resolve_target_api_key(config: SpeculativeConfig, target_base_url: str | None) -> str:
+    """Return the bearer token for the `eval` target model.
+
+    The first non-empty variable of `THETARELAY_TARGET_API_KEY`, `OPENROUTER_API_KEY` and
+    `OPENAI_API_KEY` wins. The local API key is used only when the target is the local server
+    itself, so it is never sent to a different (possibly remote) host.
+
+    Raises:
+        ValueError: The target URL differs from the local URL and no target key is set.
+    """
+    for name in _TARGET_API_KEY_ENV_VARS:
+        value = os.environ.get(name)
+        if value:
+            return value
+    local_url = config.local_base_url.rstrip("/")
+    if target_base_url is None or target_base_url.rstrip("/") == local_url:
+        return config.local_api_key
+    raise ValueError(
+        "The target URL is not the local URL, and no target API key is set. Set one of "
+        + ", ".join(_TARGET_API_KEY_ENV_VARS)
+        + "."
+    )

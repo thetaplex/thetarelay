@@ -25,7 +25,7 @@ from typing import Any
 
 import httpx
 
-from ...config import SpeculativeConfig
+from ...config import SpeculativeConfig, resolve_target_api_key
 from ...engine import (
     DraftResult,
     convert_to_openai_draft_payload,
@@ -659,15 +659,8 @@ async def run_humaneval_benchmark(
     if limit is not None and limit > 0:
         suite = suite[:limit]
 
-    # Ensure target_api_key can be passed via env (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, etc.)
-    import os
-
-    target_api_key = (
-        os.environ.get("THETARELAY_TARGET_API_KEY")
-        or os.environ.get("OPENROUTER_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-        or cfg.local_api_key
-    )
+    # Resolve the target key before the local phase so a missing key fails fast.
+    target_api_key = resolve_target_api_key(cfg, target_base_url) if target_model else ""
     draft_map: dict[str, DraftResult] = {}
     task_rows: list[dict[str, Any]] = []
 

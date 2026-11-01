@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-thetarelay is in beta (0.x). Until 1.0, security fixes go only to `main` and to the next release on PyPI. Upgrade with `uv tool upgrade thetarelay`.
+thetarelay is in alpha (0.x). Until 1.0, security fixes go only to `main` and to the next release on PyPI. Upgrade with `uv tool upgrade thetarelay`.
 
 ## Reporting a vulnerability
 

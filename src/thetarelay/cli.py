@@ -11,7 +11,7 @@ from pathlib import Path
 
 import uvicorn
 
-from .config import SpeculativeConfig
+from .config import SpeculativeConfig, resolve_target_api_key
 from .evals import (
     format_benchmark_report_table,
     get_eval_suite,
@@ -109,6 +109,12 @@ def main(argv: list[str] | None = None) -> None:
     eval_parser = subparsers.add_parser(
         "eval",
         help="Evaluate a live local draft model (Ollama/MLX/vLLM) on a use case's tasks",
+        description=(
+            "Evaluate a live local draft model on a use case's tasks. "
+            "WARNING: `--benchmark humaneval` runs model-generated code with exec() in a child "
+            "process. The only protection is a 3-second time limit; the code can read and change "
+            "files and use the network. Run it in a container or VM."
+        ),
     )
     _add_usecase_argument(eval_parser, "Use case whose scenarios and benchmarks to run")
     eval_parser.add_argument(
@@ -203,6 +209,13 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "eval":
+        target_model = getattr(args, "target_model", None)
+        target_url = getattr(args, "target_url", None)
+        if target_model:
+            try:
+                resolve_target_api_key(cfg, target_url)
+            except ValueError as exc:
+                eval_parser.error(str(exc))
         eval_suite = get_eval_suite(cfg.usecase)
         benchmark = getattr(args, "benchmark", "scenarios")
         if benchmark != "scenarios":
@@ -216,8 +229,8 @@ def main(argv: list[str] | None = None) -> None:
                     cfg,
                     dataset=getattr(args, "dataset", None),
                     limit=getattr(args, "limit", None),
-                    target_model=getattr(args, "target_model", None),
-                    target_base_url=getattr(args, "target_url", None),
+                    target_model=target_model,
+                    target_base_url=target_url,
                 )
             )
             print(json.dumps(extra_report, indent=2))
@@ -232,8 +245,8 @@ def main(argv: list[str] | None = None) -> None:
             run_live_eval(
                 cfg,
                 scenarios=scenarios,
-                target_model=getattr(args, "target_model", None),
-                target_base_url=getattr(args, "target_url", None),
+                target_model=target_model,
+                target_base_url=target_url,
                 eval_suite=eval_suite,
             )
         )

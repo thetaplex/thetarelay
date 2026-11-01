@@ -27,7 +27,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from .config import SpeculativeConfig
+from .config import SpeculativeConfig, resolve_target_api_key
 from .engine import (
     DraftResult,
     convert_to_openai_draft_payload,
@@ -806,6 +806,8 @@ async def run_live_eval(
     cfg = config or SpeculativeConfig.from_env()
     es = eval_suite or get_eval_suite(cfg.usecase)
     suite = [s for s in (scenarios or es.builtin_scenarios()) if s.category != "bypass"]
+    # Resolve the target key before the local phase so a missing key fails fast.
+    target_api_key = resolve_target_api_key(cfg, target_base_url) if target_model else ""
 
     results: list[dict[str, Any]] = []
     draft_objects: dict[str, DraftResult] = {}
@@ -951,14 +953,6 @@ async def run_live_eval(
         # Phase 2 (Optional): Batched Target Model Verification & Baseline Comparison
         target_summary: dict[str, Any] | None = None
         if target_model:
-            import os
-
-            target_api_key = (
-                os.environ.get("THETARELAY_TARGET_API_KEY")
-                or os.environ.get("OPENROUTER_API_KEY")
-                or os.environ.get("OPENAI_API_KEY")
-                or cfg.local_api_key
-            )
             t_url_base = (target_base_url or cfg.local_base_url).rstrip("/")
             warmup_target_ms = await warmup_openai_model(
                 client,
