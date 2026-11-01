@@ -45,6 +45,29 @@ not show an error. See [Known limitations](known-limitations.md).
 | `THETARELAY_SKIP_MODELS` | `haiku,mini,nano,flash` | Comma-separated words. thetarelay does not draft if the model name contains one of them. |
 | `THETARELAY_ACCEPT_TOKEN` | `<ACCEPT/>` | Text that the frontier model writes to accept the draft. |
 
+## Turn log
+
+| Variable | Default | Description |
+|---|---|---|
+| `THETARELAY_TURN_LOG` | Empty (off) | Path of a JSON Lines file. The proxy appends one line for each request it forwards. Use it to review accepted drafts after an evaluation run. The file contains prompt and draft text, so keep it private. It never contains request headers or API keys. |
+
+Fields of each line:
+
+| Field | Value |
+|---|---|
+| `ts` | Time the turn finished, ISO 8601, UTC. |
+| `provider` | `anthropic` or `openai`. |
+| `model` | Model name of the request. |
+| `conversation` | First 12 hex characters of the SHA-256 of the first user message. Turns of one agent session have the same value. |
+| `turn` | Number of messages in the request. |
+| `stream` | `true` if the request was streamed. |
+| `mode` | `accept_swap`, `openai_prediction`, `context_only` or `none`. |
+| `drafted`, `skip_reason`, `draft_error` | If a draft was made, and if not, why. |
+| `draft_ms`, `frontier_ms` | Draft time and frontier time in milliseconds. `frontier_ms` is `null` for streamed turns. |
+| `accepted` | `true` if the client received the draft, `false` if the frontier model rejected it, `null` if no `<ACCEPT/>` decision was made. |
+| `draft_text`, `draft_tool_calls` | The local draft. |
+| `last_message` | Text of the last message of the request. |
+
 ## Estimates for statistics
 
 These values affect the statistics only. They do not change the requests.

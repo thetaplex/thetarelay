@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `THETARELAY_TURN_LOG`: the proxy appends one JSON line per turn (draft, mode, accept decision, timings) for quality review.
 - `docs/reference/tested-models.md`: the frontier and local models that were tested, and which are confirmed.
 - Documentation in `docs/`: tutorial, how-to guides, reference and explanation pages (Diátaxis, ASD-STE100).
 

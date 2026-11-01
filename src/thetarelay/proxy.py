@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -57,6 +60,55 @@ def _clean_inbound_response_headers(headers: Any) -> dict[str, str]:
         if k.lower()
         not in {"content-length", "transfer-encoding", "content-encoding", "connection"}
     }
+
+
+TurnLogger = Callable[..., None]
+
+
+def _turn_logger(
+    cfg: SpeculativeConfig, body: dict[str, Any], provider: str, draft: DraftResult, mode: str
+) -> TurnLogger:
+    """Return `log(accepted, frontier_ms=None)`, which appends one turn to `cfg.turn_log_path`.
+
+    `accepted` is None when no `<ACCEPT/>` decision was made (no draft, `prediction`,
+    `context_only`, upstream error). Request headers and API keys are never written.
+    """
+    if not cfg.turn_log_path:
+        return lambda *_args, **_kwargs: None
+    messages = body.get("messages") or []
+    first_user: dict[str, Any] = next((m for m in messages if m.get("role") == "user"), {})
+    conversation = hashlib.sha256(
+        extract_text_from_content(first_user.get("content", "")).encode()
+    ).hexdigest()[:12]
+    last_message = extract_text_from_content(messages[-1].get("content", "")) if messages else ""
+
+    def log(accepted: bool | None, frontier_ms: float | None = None) -> None:
+        record = {
+            "ts": datetime.now(UTC).isoformat(timespec="milliseconds"),
+            "provider": provider,
+            "model": body.get("model"),
+            "conversation": conversation,
+            "turn": len(messages),
+            "stream": bool(body.get("stream", False)),
+            "mode": mode,
+            "drafted": draft.has_draft,
+            "skip_reason": draft.skip_reason or None,
+            "draft_error": draft.error or None,
+            "draft_ms": round(draft.latency_ms, 1),
+            "frontier_ms": round(frontier_ms, 1) if frontier_ms is not None else None,
+            "accepted": accepted,
+            "draft_text": draft.text,
+            "draft_tool_calls": draft.tool_calls,
+            "last_message": last_message,
+        }
+        try:
+            # ponytail: blocking append per turn; fine for eval runs, move to a queue if hot.
+            with Path(cfg.turn_log_path).open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            logger.warning("Could not write turn log: %s", exc)
+
+    return log
 
 
 def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
@@ -178,6 +230,7 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
             "x-thetarelay-mode": active_mode,
             "x-thetarelay-draft-ms": f"{draft.latency_ms:.1f}",
         }
+        log_turn = _turn_logger(cfg, body, "anthropic", draft, active_mode)
 
         if stream:
             req = client.build_request(
@@ -204,6 +257,7 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                             yield chunk
                     finally:
                         await upstream_resp.aclose()
+                        log_turn(None)
 
                 return StreamingResponse(
                     raw_stream(),
@@ -212,6 +266,12 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                     headers=resp_headers,
                 )
 
+            stream_accepted = False
+
+            def on_accepted(_saved_tokens: int, _saved_usd: float) -> None:
+                nonlocal stream_accepted
+                stream_accepted = True
+
             async def intercepted_stream() -> AsyncIterator[bytes]:
                 try:
                     async for chunk in intercept_anthropic_sse_stream(
@@ -219,10 +279,12 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                         draft=draft,
                         config=cfg,
                         metrics=metrics,
+                        on_accepted_callback=on_accepted,
                     ):
                         yield chunk
                 finally:
                     await upstream_resp.aclose()
+                    log_turn(stream_accepted)
 
             return StreamingResponse(
                 intercepted_stream(),
@@ -259,6 +321,7 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                     resp_headers["x-thetarelay-accepted"] = "true"
                     resp_headers["x-thetarelay-tokens-saved"] = str(saved_tok)
                     swapped = build_anthropic_response_from_draft(resp_json, draft)
+                    log_turn(True, frontier_ms)
                     return JSONResponse(status_code=200, content=swapped, headers=resp_headers)
                 else:
                     metrics.record_turn_outcome(
@@ -272,6 +335,8 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
             except Exception as exc:
                 logger.warning("Failed to inspect non-streaming Anthropic response: %s", exc)
 
+        rejected = resp_headers.get("x-thetarelay-accepted") == "false"
+        log_turn(False if rejected else None, frontier_ms)
         return Response(
             content=upstream_resp.content,
             status_code=upstream_resp.status_code,
@@ -337,6 +402,7 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
             "x-thetarelay-mode": active_mode,
             "x-thetarelay-draft-ms": f"{draft.latency_ms:.1f}",
         }
+        log_turn = _turn_logger(cfg, body, "openai", draft, active_mode)
 
         if stream:
             req = client.build_request(
@@ -363,6 +429,7 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                             yield chunk
                     finally:
                         await upstream_resp.aclose()
+                        log_turn(None)
 
                 return StreamingResponse(
                     raw_stream(),
@@ -370,6 +437,12 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                     media_type="text/event-stream",
                     headers=resp_headers,
                 )
+
+            stream_accepted = False
+
+            def on_accepted(_saved_tokens: int, _saved_usd: float) -> None:
+                nonlocal stream_accepted
+                stream_accepted = True
 
             async def intercepted_stream() -> AsyncIterator[bytes]:
                 try:
@@ -379,10 +452,12 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                         config=cfg,
                         metrics=metrics,
                         model=model,
+                        on_accepted_callback=on_accepted,
                     ):
                         yield chunk
                 finally:
                     await upstream_resp.aclose()
+                    log_turn(stream_accepted)
 
             return StreamingResponse(
                 intercepted_stream(),
@@ -422,6 +497,7 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
                         resp_headers["x-thetarelay-accepted"] = "true"
                         resp_headers["x-thetarelay-tokens-saved"] = str(saved_tok)
                         swapped = build_openai_response_from_draft(resp_json, draft)
+                        log_turn(True, frontier_ms)
                         return JSONResponse(status_code=200, content=swapped, headers=resp_headers)
                     else:
                         metrics.record_turn_outcome(
@@ -435,6 +511,8 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
             except Exception as exc:
                 logger.warning("Failed to inspect non-streaming OpenAI response: %s", exc)
 
+        rejected = resp_headers.get("x-thetarelay-accepted") == "false"
+        log_turn(False if rejected else None, frontier_ms)
         return Response(
             content=upstream_resp.content,
             status_code=upstream_resp.status_code,

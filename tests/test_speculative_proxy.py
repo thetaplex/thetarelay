@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -601,3 +602,78 @@ async def test_headroom_turn_hook_and_streaming_middleware() -> None:
         assert "def divide(a, b):" in text_body
         assert "<ACCEPT/>" not in text_body
         assert metrics.frontier_accepted_count == 2
+
+
+@pytest.mark.asyncio
+async def test_turn_log_records_each_turn_outcome(tmp_path: Path) -> None:
+    log_path = tmp_path / "turns.jsonl"
+    cfg = SpeculativeConfig(
+        local_base_url="http://local.test/v1",
+        anthropic_upstream_url="http://anth.test",
+        openai_upstream_url="http://oai.test",
+        enable_headroom_middleware=False,
+        turn_log_path=str(log_path),
+    )
+    app = create_app(cfg)
+    draft = "def multiply(x, y):\n    return x * y\n"
+    reject_sse = "".join(
+        f"event: {e}\ndata: {json.dumps(d)}\n\n"
+        for e, d in [
+            ("message_start", {"type": "message_start", "message": {"id": "m", "content": []}}),
+            (
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+            ),
+            (
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "def multiply(a, b): ..."},
+                },
+            ),
+            ("message_stop", {"type": "message_stop"}),
+        ]
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        body = json.loads(request.content)
+        if url.startswith("http://local.test"):
+            return httpx.Response(200, json={"choices": [{"message": {"content": draft}}]})
+        if url.startswith("http://anth.test") and body.get("stream"):
+            return httpx.Response(
+                200, text=reject_sse, headers={"content-type": "text/event-stream"}
+            )
+        if url.startswith("http://anth.test"):
+            return httpx.Response(200, json={"content": [{"type": "text", "text": "<ACCEPT/>"}]})
+        return httpx.Response(200, json={"choices": [{"message": {"content": draft}}]})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    ask = [{"role": "user", "content": "Write a python function multiply(x, y)."}]
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://relay"
+    ) as client:
+        await client.post("/v1/messages", json={"model": "claude-x", "messages": ask})
+        stream_resp = await client.post(
+            "/v1/messages", json={"model": "claude-x", "messages": ask, "stream": True}
+        )
+        assert "def multiply(a, b)" in stream_resp.text
+        await client.post("/v1/chat/completions", json={"model": "gpt-x", "messages": ask})
+    await app.state.http_client.aclose()
+
+    turns = [json.loads(line) for line in log_path.read_text().splitlines()]
+    assert [(t["provider"], t["stream"], t["mode"], t["accepted"]) for t in turns] == [
+        ("anthropic", False, "accept_swap", True),
+        ("anthropic", True, "accept_swap", False),
+        ("openai", False, "openai_prediction", None),
+    ]
+    assert turns[0]["draft_text"] == draft
+    assert turns[0]["frontier_ms"] is not None
+    assert turns[0]["conversation"] == turns[2]["conversation"]  # same first user message
+    assert turns[0]["last_message"] == ask[0]["content"]
+    assert "authorization" not in log_path.read_text().lower()

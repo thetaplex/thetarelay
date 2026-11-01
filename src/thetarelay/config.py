@@ -78,6 +78,9 @@ class SpeculativeConfig:
     selective_speculation: bool = True
     min_prompt_chars_for_draft: int = 15
 
+    # Append one JSON line per proxied turn to this file (empty: off). For quality review.
+    turn_log_path: str = ""
+
     # Enable Headroom in-process CompressionMiddleware when running standalone
     enable_headroom_middleware: bool = True
 
@@ -126,6 +129,7 @@ class SpeculativeConfig:
             usecase=os.environ.get("THETARELAY_USECASE", DEFAULT_USECASE).strip().lower(),
             selective_speculation=_env_bool("THETARELAY_SELECTIVE", True),
             min_prompt_chars_for_draft=_env_int("THETARELAY_MIN_PROMPT_CHARS", 15),
+            turn_log_path=os.environ.get("THETARELAY_TURN_LOG", "").strip(),
             enable_headroom_middleware=_env_bool("THETARELAY_HEADROOM_MIDDLEWARE", True),
             accept_token=os.environ.get("THETARELAY_ACCEPT_TOKEN", "<ACCEPT/>").strip(),
             estimated_input_usd_per_million=_env_float("THETARELAY_INPUT_USD_PER_M", 3.0),
