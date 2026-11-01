@@ -48,8 +48,10 @@ scenarios and does not maintain multi-turn adaptive context state.
 
 ## `thetarelay eval`
 
-Evaluates a live local model. The output is always JSON. `eval` tests individual benchmark
-problems with a fixed context window without multi-turn adaptive context tracking.
+Evaluates a live local model. The output is always JSON. The local draft request is built as in
+the proxy (adaptive context window). The target model gets the full request: no window, no tool
+limit. Each arm (baseline, speculative, mutant) starts its system prompt with a different salt, so
+one arm never reads the provider prompt cache written by another arm.
 
 | Option | Value | Default |
 |---|---|---|
@@ -60,6 +62,9 @@ problems with a fixed context window without multi-turn adaptive context trackin
 | `--usecase` | `coding` | `THETARELAY_USECASE` or `coding` |
 | `--benchmark` | `scenarios` or `humaneval` | `scenarios` |
 | `--dataset` | Path to a scenario JSONL file, or a HumanEval `.jsonl` or `.jsonl.gz` file | Built-in set |
+| `--strategy` | `auto`, `accept_swap`, `prediction` or `context_only`. The verification arm to run. With `humaneval`, `auto` runs `accept_swap`. | `THETARELAY_STRATEGY` or `auto` |
+| `--concise-baseline` | Flag. Gives the baseline the drafter's concise instructions (prompt-matched baseline). | Off |
+| `--mutants` | Number of AST mutants for each problem that fail the unit tests, for the buggy-draft test. Applies to `humaneval` only. | `1` |
 | `--limit` | Maximum number of problems. Applies to `humaneval` only. | All |
 | `--json` | Flag. Has no effect. | — |
 

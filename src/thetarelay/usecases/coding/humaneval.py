@@ -19,8 +19,10 @@ import json
 import math
 import multiprocessing
 import os
+import random
 import textwrap
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,9 +34,8 @@ from ...engine import (
     DraftResult,
     convert_to_openai_draft_payload,
     inject_draft_into_body,
-    response_accepted_draft,
 )
-from ...evals import warmup_openai_model
+from ...evals import arm_prefix, final_output_is_draft, target_chat_payload, warmup_openai_model
 from .scenarios import extract_python_code_blocks
 
 _HUMANEVAL_SYS_PROMPT = "You are an expert Python programmer. Complete the requested function."
@@ -375,6 +376,26 @@ def get_builtin_humaneval_problems() -> list[HumanEvalProblem]:
     ]
 
 
+def _request_body(prob: HumanEvalProblem, model: str, provider: str) -> dict[str, Any]:
+    user = (
+        f"Complete the following Python function `{prob.entry_point}`:\n\n"
+        f"```python\n{prob.prompt}```"
+    )
+    if provider == "openai":
+        return {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": _HUMANEVAL_SYS_PROMPT},
+                {"role": "user", "content": user},
+            ],
+        }
+    return {
+        "model": model,
+        "system": _HUMANEVAL_SYS_PROMPT,
+        "messages": [{"role": "user", "content": user}],
+    }
+
+
 def load_humaneval_from_file(path: Path) -> list[HumanEvalProblem]:
     """Load official OpenAI `HumanEval.jsonl` or `HumanEval.jsonl.gz` problems."""
     if path.name.endswith(".gz"):
@@ -569,6 +590,71 @@ def mutate_python_code_ast(code_str: str) -> list[tuple[str, str]]:
     return mutants
 
 
+def failing_mutants(problem: HumanEvalProblem, k: int) -> list[tuple[str, str]]:
+    """Return up to `k` AST mutants of the canonical solution that fail the unit tests.
+
+    Mutants that still pass (equivalent mutants) are dropped: accepting one is not sycophancy.
+    The pick is shuffled with the task id as seed, so it is the same on every run.
+    """
+    if k <= 0 or not problem.canonical_solution.strip():
+        return []
+    source = problem.canonical_solution
+    if f"def {problem.entry_point}" not in source:
+        # Official HumanEval stores only the function body.
+        source = problem.prompt + source
+    candidates = mutate_python_code_ast(source)
+    random.Random(problem.task_id).shuffle(candidates)  # noqa: S311 - reproducible sampling
+    picked: list[tuple[str, str]] = []
+    for label, src in candidates:
+        if not evaluate_humaneval_functional_pass(code_str=src, problem=problem)[0]:
+            picked.append((label, src))
+            if len(picked) == k:
+                break
+    return picked
+
+
+def _wilson(successes: int, n: int, z: float = 1.959964) -> tuple[float, float]:
+    p = successes / n
+    denom = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return centre - half, centre + half
+
+
+def paired_difference_ci(a: int, b: int, c: int, d: int) -> tuple[float, float]:
+    """95% CI for the paired difference (c - b) / n: Newcombe (1998) method 10.
+
+    Hybrid score interval with a continuity-corrected phi. Unlike the Wald interval it does
+    not collapse to [0, 0] when there are no discordant pairs, and it stays in [-1, 1].
+    """
+    n = a + b + c + d
+    p_base, p_spec = (a + b) / n, (a + c) / n
+    l_base, u_base = _wilson(a + b, n)
+    l_spec, u_spec = _wilson(a + c, n)
+    denom = (a + b) * (c + d) * (a + c) * (b + d)
+    num = float(a * d - b * c)
+    num = max(num - n / 2, 0.0) if num > 0 else num
+    phi = num / math.sqrt(denom) if denom else 0.0
+    diff = p_spec - p_base
+    low = diff - math.sqrt(
+        max(
+            0.0,
+            (p_spec - l_spec) ** 2
+            - 2 * phi * (p_spec - l_spec) * (u_base - p_base)
+            + (u_base - p_base) ** 2,
+        )
+    )
+    high = diff + math.sqrt(
+        max(
+            0.0,
+            (u_spec - p_spec) ** 2
+            - 2 * phi * (u_spec - p_spec) * (p_base - l_base)
+            + (p_base - l_base) ** 2,
+        )
+    )
+    return max(-1.0, low), min(1.0, high)
+
+
 def compute_paired_mcnemar_and_confusion(task_rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Compute paired McNemar non-inferiority stats and the 2x2 Verifier Confusion Matrix.
 
@@ -599,11 +685,9 @@ def compute_paired_mcnemar_and_confusion(task_rows: list[dict[str, Any]]) -> dic
         tail = sum(math.comb(discordant, i) for i in range(k + 1)) / (2**discordant)
         p_val = min(1.0, 2.0 * tail)
 
-    # Paired difference (spec - base) and Wald/Agresti-Min 95% CI
+    # Paired difference (spec - base) and Newcombe hybrid score 95% CI
     diff = (c - b) / n
-    se = math.sqrt(max(0.0, (b + c) - ((c - b) ** 2) / n)) / n
-    ci_low = max(-1.0, diff - 1.96 * se)
-    ci_high = min(1.0, diff + 1.96 * se)
+    ci_low, ci_high = paired_difference_ci(a, b, c, d)
 
     # Verifier 2x2 Confusion Matrix (Draft Functional Pass vs Verifier Accepted)
     tp_accept = sum(1 for r in paired if r.get("local_pass_at_1") and r.get("target_accepted"))
@@ -663,7 +747,8 @@ async def run_humaneval_benchmark(
     target_model: str | None = None,
     target_base_url: str | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
-    concise_baseline: bool | None = None,
+    concise_baseline: bool = False,
+    mutants: int = 1,
 ) -> dict[str, Any]:
     """Run the standard HumanEval coding benchmark comparing:
     - Local Drafter `pass@1`
@@ -672,11 +757,7 @@ async def run_humaneval_benchmark(
     - Buggy-Draft Guardrail Stress Test (verifier rejects subtly buggy drafts and recovers `pass@1`)
     """
     cfg = config or SpeculativeConfig.from_env()
-    if concise_baseline is None:
-        concise_env = os.environ.get("THETARELAY_EVAL_CONCISE_BASELINE", "").strip().lower()
-        use_concise_baseline = concise_env in ("1", "true", "yes", "on")
-    else:
-        use_concise_baseline = concise_baseline
+    use_concise_baseline = concise_baseline
     suite = list(problems or get_builtin_humaneval_problems())
     if limit is not None and limit > 0:
         suite = suite[:limit]
@@ -778,16 +859,43 @@ async def run_humaneval_benchmark(
                     disable_thinking=True,
                 )
 
-            target_cfg = copy.deepcopy(cfg)
-            target_cfg.local_model = target_model
-            target_cfg.strategy = "accept_swap"
-            # Ensure frontier baseline and rejection rewrites are not truncated at the local
-            # drafter's 384-token budget when generating full explanations + code.
-            target_cfg.local_max_tokens = max(2048, cfg.local_max_tokens)
-            # By default, the frontier baseline gets the original request without local drafting
-            # instructions; set `concise_baseline=True` (or THETARELAY_EVAL_CONCISE_BASELINE=1)
-            # for a prompt-matched concise baseline ablation.
-            target_cfg.local_concise_draft_instructions = use_concise_baseline
+            # `auto` keeps the historical default arm; set `strategy` to run another arm.
+            strategy = "accept_swap" if cfg.strategy == "auto" else cfg.strategy
+            arm_cfg = copy.deepcopy(cfg)
+            arm_cfg.strategy = strategy
+            # Predicted Outputs are an OpenAI request field, so that arm sends OpenAI bodies.
+            provider = "openai" if strategy == "prediction" else "anthropic"
+            run_id = uuid.uuid4().hex[:8]
+            # Room for full explanations + code; never the drafter's small token budget.
+            max_tokens = max(2048, cfg.local_max_tokens)
+            base_prefix = arm_prefix("baseline", run_id, cfg, concise=use_concise_baseline)
+
+            async def ask_target(
+                body: dict[str, Any], prefix: str
+            ) -> tuple[str, dict[str, Any], float]:
+                payload = target_chat_payload(
+                    body, provider, target_model, cfg, system_prefix=prefix, max_tokens=max_tokens
+                )
+                t0 = time.perf_counter()
+                resp = await client.post(
+                    f"{t_url_base}/chat/completions",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {target_api_key}"},
+                    timeout=60.0,
+                )
+                ms = (time.perf_counter() - t0) * 1000.0
+                data = resp.json() if resp.status_code == 200 else {}
+                msg = ((data.get("choices") or [{}])[0]).get("message") or {}
+                return str(msg.get("content") or ""), data.get("usage") or {}, ms
+
+            async def verify(
+                prob: HumanEvalProblem, draft: DraftResult, arm: str = ""
+            ) -> tuple[str, dict[str, Any], float, bool]:
+                body, mode = inject_draft_into_body(
+                    _request_body(prob, target_model, provider), provider, draft, arm_cfg
+                )
+                text, usage, ms = await ask_target(body, arm_prefix(arm + mode, run_id, cfg))
+                return text, usage, ms, final_output_is_draft(mode, text, arm_cfg)
 
             base_pass_count = 0
             spec_pass_count = 0
@@ -802,34 +910,10 @@ async def run_humaneval_benchmark(
             total_spec_cached_tok = 0
 
             for prob, row in zip(suite, task_rows, strict=False):
-                req_body = {
-                    "model": target_model,
-                    "system": _HUMANEVAL_SYS_PROMPT,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": (
-                                f"Complete the following Python function `{prob.entry_point}`:\n\n"
-                                f"```python\n{prob.prompt}```"
-                            ),
-                        }
-                    ],
-                }
                 # 2a. Target Baseline Direct Run
-                base_payload = convert_to_openai_draft_payload(req_body, "anthropic", target_cfg)
-                t_b0 = time.perf_counter()
-                b_resp = await client.post(
-                    f"{t_url_base}/chat/completions",
-                    json=base_payload,
-                    headers={"Authorization": f"Bearer {target_api_key}"},
-                    timeout=60.0,
+                base_text, b_usage, base_ms = await ask_target(
+                    _request_body(prob, target_model, provider), base_prefix
                 )
-                base_ms = (time.perf_counter() - t_b0) * 1000.0
-                b_data = b_resp.json() if b_resp.status_code == 200 else {}
-                base_text = str(
-                    (((b_data.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
-                )
-                b_usage = b_data.get("usage") or {}
                 base_tok = int(b_usage.get("completion_tokens", 0))
                 base_prompt_tok = int(b_usage.get("prompt_tokens", 0))
                 base_cached_tok = _extract_cached_tokens(b_usage)
@@ -839,29 +923,12 @@ async def run_humaneval_benchmark(
 
                 # 2b. Speculative Verification Run
                 draft_obj = draft_map[prob.task_id]
-                ver_cfg = copy.deepcopy(target_cfg)
-                ver_cfg.local_concise_draft_instructions = False
-                injected_body, _ = inject_draft_into_body(req_body, "anthropic", draft_obj, ver_cfg)
-                ver_payload = convert_to_openai_draft_payload(injected_body, "anthropic", ver_cfg)
-                t_v0 = time.perf_counter()
-                v_resp = await client.post(
-                    f"{t_url_base}/chat/completions",
-                    json=ver_payload,
-                    headers={"Authorization": f"Bearer {target_api_key}"},
-                    timeout=60.0,
-                )
-                verify_ms = (time.perf_counter() - t_v0) * 1000.0
-                v_data = v_resp.json() if v_resp.status_code == 200 else {}
-                ver_text = str(
-                    (((v_data.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
-                )
-                v_usage = v_data.get("usage") or {}
+                ver_text, v_usage, verify_ms, accepted = await verify(prob, draft_obj)
                 ver_tok = int(v_usage.get("completion_tokens", 0))
                 ver_prompt_tok = int(v_usage.get("prompt_tokens", 0))
                 ver_cached_tok = _extract_cached_tokens(v_usage)
-                accepted = response_accepted_draft(ver_text, ver_cfg)
 
-                # Final speculative output is local draft if `<ACCEPT/>`, else target's rewrite!
+                # The user gets the local draft only on an accepted `accept_swap`.
                 final_spec_code = draft_obj.text if accepted else ver_text
                 spec_passed, spec_err = evaluate_humaneval_functional_pass(
                     code_str=final_spec_code, problem=prob
@@ -905,64 +972,64 @@ async def run_humaneval_benchmark(
                     }
                 )
 
-            # 2c. Buggy-Draft Guardrail Stress Test (on problems with `buggy_draft`)
-            buggy_problems = [p for p in suite if p.buggy_draft]
+            # 2c. Buggy-draft stress test: hand-written buggy drafts plus AST mutants of the
+            # canonical solutions. Only drafts that really fail the unit tests are sent, so an
+            # accepted draft is always a true false accept.
+            buggy: list[tuple[HumanEvalProblem, str, str]] = [
+                (p, "handwritten", p.buggy_draft) for p in suite if p.buggy_draft
+            ]
+            for p in suite:
+                buggy += [(p, f"ast:{label}", src) for label, src in failing_mutants(p, mutants)]
             guard_results: list[dict[str, Any]] = []
-            for bprob in buggy_problems:
-                # Confirm the buggy draft genuinely fails the canonical unit test suite
-                bug_passes, _ = evaluate_humaneval_functional_pass(
-                    code_str=bprob.buggy_draft, problem=bprob
-                )
-                req_body = {
-                    "model": target_model,
-                    "system": _HUMANEVAL_SYS_PROMPT,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": (
-                                f"Complete the following Python function `{bprob.entry_point}`:\n\n"
-                                f"```python\n{bprob.prompt}```"
-                            ),
-                        }
-                    ],
-                }
-                ver_cfg = copy.deepcopy(target_cfg)
-                ver_cfg.local_concise_draft_instructions = False
+            for bprob, source, code in buggy:
+                bug_passes, _ = evaluate_humaneval_functional_pass(code_str=code, problem=bprob)
+                if bug_passes:
+                    continue
                 bug_draft_obj = DraftResult(
-                    text=f"```python\n{bprob.buggy_draft}```",
+                    text=f"```python\n{code}```",
                     latency_ms=200.0,
                     draft_tokens_est=40,
                 )
-                inj_body, _ = inject_draft_into_body(req_body, "anthropic", bug_draft_obj, ver_cfg)
-                v_payload = convert_to_openai_draft_payload(inj_body, "anthropic", ver_cfg)
-                v_resp = await client.post(
-                    f"{t_url_base}/chat/completions",
-                    json=v_payload,
-                    headers={"Authorization": f"Bearer {target_api_key}"},
-                    timeout=60.0,
-                )
-                v_data = v_resp.json() if v_resp.status_code == 200 else {}
-                v_text = str(
-                    (((v_data.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
-                )
-                accepted_bug = response_accepted_draft(v_text, ver_cfg)
-                final_code = bprob.buggy_draft if accepted_bug else v_text
+                v_text, _, _, accepted_bug = await verify(bprob, bug_draft_obj, "mutant-")
+                final_code = code if accepted_bug else v_text
                 recovered_pass, _ = evaluate_humaneval_functional_pass(
                     code_str=final_code, problem=bprob
                 )
                 guard_results.append(
                     {
                         "task_id": bprob.task_id,
+                        "source": source,
                         "buggy_draft_pass_at_1": bug_passes,
                         "verifier_rejected_bug": not accepted_bug,
                         "recovered_pass_at_1": recovered_pass,
                     }
                 )
+            n_bug = len(guard_results)
+            guard_summary = {
+                "strategy": strategy,
+                "failing_drafts": n_bug,
+                # Accepting only exists in `accept_swap`; other arms always answer themselves.
+                "false_accept_rate_pct": (
+                    round(
+                        sum(not g["verifier_rejected_bug"] for g in guard_results) / n_bug * 100, 1
+                    )
+                    if n_bug and strategy == "accept_swap"
+                    else None
+                ),
+                # Recovery under `accept_swap`; anchoring check under `context_only`/`prediction`.
+                "final_pass_at_1_pct": (
+                    round(sum(g["recovered_pass_at_1"] for g in guard_results) / n_bug * 100, 1)
+                    if n_bug
+                    else None
+                ),
+            }
 
             n = max(1, len(suite))
             paired_stats = compute_paired_mcnemar_and_confusion(task_rows)
             target_summary = {
                 "target_model": target_model,
+                "strategy": strategy,
+                "run_id": run_id,
                 "concise_baseline": use_concise_baseline,
                 "warmup_target_ms": warmup_target_ms,
                 "baseline_pass_at_1_pct": round((base_pass_count / n) * 100.0, 1),
@@ -990,6 +1057,7 @@ async def run_humaneval_benchmark(
                 ),
                 **paired_stats,
                 "buggy_draft_guardrail_tests": guard_results,
+                "buggy_draft_guardrail_summary": guard_summary,
             }
 
     local_pass_count = sum(1 for r in task_rows if r["local_pass_at_1"])

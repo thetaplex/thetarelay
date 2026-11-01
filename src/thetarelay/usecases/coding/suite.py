@@ -18,6 +18,8 @@ async def _run_humaneval(
     limit: int | None,
     target_model: str | None,
     target_base_url: str | None,
+    concise_baseline: bool,
+    mutants: int,
 ) -> dict[str, Any]:
     return await run_humaneval_benchmark(
         config,
@@ -25,6 +27,8 @@ async def _run_humaneval(
         limit=limit,
         target_model=target_model,
         target_base_url=target_base_url,
+        concise_baseline=concise_baseline,
+        mutants=mutants,
     )
 
 

@@ -582,7 +582,7 @@ def build_verification_injection(draft: DraftResult, config: SpeculativeConfig) 
         f"If the draft is complete, accurate, and directly satisfies the request (including any "
         f"tool call names and arguments), output ONLY `{config.accept_token}` and nothing else. "
         f"If it needs any changes, ignore `{config.accept_token}` and output your full response "
-        f"or tool calls normally."
+        f"or tool calls normally, without mentioning the draft."
     )
 
 
