@@ -20,6 +20,7 @@ import copy
 import importlib
 import json
 import time
+import uuid
 from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,9 +30,11 @@ import httpx
 
 from .config import SpeculativeConfig
 from .engine import (
+    AdaptiveDraftWindow,
     DraftResult,
     convert_to_openai_draft_payload,
     estimate_injection_input_tokens,
+    extract_text_from_content,
     inject_draft_into_body,
     response_accepted_draft,
 )
@@ -111,6 +114,8 @@ class ExtraBenchmark(Protocol):
         limit: int | None,
         target_model: str | None,
         target_base_url: str | None,
+        concise_baseline: bool,
+        mutants: int,
     ) -> Coroutine[Any, Any, dict[str, Any]]: ...
 
 
@@ -784,6 +789,148 @@ async def warmup_openai_model(
     return round((time.perf_counter() - t0) * 1000.0, 1)
 
 
+def local_draft_payload(
+    window: AdaptiveDraftWindow, body: dict[str, Any], provider: str, cfg: SpeculativeConfig
+) -> tuple[dict[str, Any], int]:
+    """Build the local draft request exactly as the proxy does; return it and the new chars.
+
+    Pass the returned char count to `window.observe` after the draft so the window learns the
+    local read speed, as in the proxy.
+    """
+    if cfg.local_adaptive_context:
+        return window.build_payload(body, provider, cfg)
+    return convert_to_openai_draft_payload(body, provider, cfg), 0
+
+
+def _anthropic_to_openai_chat(
+    body: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    messages: list[dict[str, Any]] = []
+    if body.get("system"):
+        messages.append({"role": "system", "content": extract_text_from_content(body["system"])})
+    tool_use_ids: set[str] = set()
+    for msg in body.get("messages") or []:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            messages.append({"role": role, "content": content})
+            continue
+        texts: list[str] = []
+        calls: list[dict[str, Any]] = []
+        for block in content:
+            kind = block.get("type")
+            if kind == "text":
+                texts.append(block.get("text", ""))
+            elif kind == "tool_use":
+                tool_use_ids.add(block["id"])
+                calls.append(
+                    {
+                        "id": block["id"],
+                        "type": "function",
+                        "function": {
+                            "name": block["name"],
+                            "arguments": json.dumps(block.get("input", {})),
+                        },
+                    }
+                )
+            elif kind == "tool_result":
+                result = extract_text_from_content(block.get("content", ""))
+                use_id = block.get("tool_use_id", "")
+                if use_id in tool_use_ids:
+                    messages.append({"role": "tool", "tool_call_id": use_id, "content": result})
+                else:
+                    # A result without its tool_use turn (trimmed fixtures): OpenAI rejects
+                    # orphan tool messages, so keep it as text.
+                    texts.append(f"[Tool Result ({use_id or 'tool'})]:\n{result}")
+        if role == "assistant":
+            out: dict[str, Any] = {"role": "assistant", "content": "\n".join(texts) or None}
+            if calls:
+                out["tool_calls"] = calls
+            messages.append(out)
+        elif texts:
+            messages.append({"role": role, "content": "\n".join(texts)})
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "parameters": t["input_schema"],
+            },
+        }
+        if "input_schema" in t
+        else t
+        for t in body.get("tools") or []
+        if isinstance(t, dict)
+    ]
+    return messages, tools
+
+
+def target_chat_payload(
+    body: dict[str, Any],
+    provider: str,
+    model: str,
+    cfg: SpeculativeConfig,
+    *,
+    system_prefix: str = "",
+    max_tokens: int = 2048,
+) -> dict[str, Any]:
+    """Full-fidelity OpenAI Chat Completions payload for the frontier model.
+
+    Unlike `convert_to_openai_draft_payload` (the local drafter's bounded view), nothing is
+    windowed, trimmed or capped: the frontier model sees the whole conversation and every tool.
+    `system_prefix` goes at the very start of the system prompt; use it for the per-arm cache
+    salt and the concise-baseline instructions. Keep it constant within an arm so caching
+    between turns of the same arm still works.
+    """
+    if provider == "anthropic":
+        messages, tools = _anthropic_to_openai_chat(body)
+    else:
+        messages = copy.deepcopy(body.get("messages") or [])
+        tools = copy.deepcopy(body.get("tools") or [])
+    if system_prefix:
+        first = messages[0] if messages else {}
+        if first.get("role") in ("system", "developer") and isinstance(first.get("content"), str):
+            first["content"] = f"{system_prefix}\n\n{first['content']}"
+        else:
+            messages.insert(0, {"role": "system", "content": system_prefix})
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": cfg.local_temperature,
+        "stream": False,
+    }
+    if tools:
+        payload["tools"] = tools
+    if "prediction" in body:
+        payload["prediction"] = body["prediction"]
+    if cfg.local_disable_thinking:
+        payload["reasoning_effort"] = "none"
+    return payload
+
+
+def arm_prefix(
+    arm: str, run_id: str, cfg: SpeculativeConfig, *, concise: bool = False, has_tools: bool = False
+) -> str:
+    """System-prompt prefix for one experiment arm.
+
+    The salt gives each arm its own provider prefix cache, so a later arm never reads the
+    cache an earlier arm wrote for the same prompt. `concise` prepends the use case's
+    drafting instructions: the prompt-matched baseline that rules out "it was just told to be
+    brief" as the source of the savings.
+    """
+    prefix = f"[eval-run {run_id} arm {arm}]"
+    if concise:
+        prefix += "\n" + get_usecase(cfg.usecase).drafting_instructions(has_tools)
+    return prefix
+
+
+def final_output_is_draft(mode: str, verifier_text: str, cfg: SpeculativeConfig) -> bool:
+    """True when the user would receive the local draft: only an accepted `accept_swap`."""
+    return mode == "accept_swap" and response_accepted_draft(verifier_text, cfg)
+
+
 async def run_live_eval(
     config: SpeculativeConfig | None = None,
     scenarios: list[EvalScenario] | None = None,
@@ -791,6 +938,7 @@ async def run_live_eval(
     target_model: str | None = None,
     target_base_url: str | None = None,
     eval_suite: EvalSuite | None = None,
+    concise_baseline: bool = False,
 ) -> dict[str, Any]:
     """Evaluate a live local drafter endpoint (e.g., Ollama / MLX / vLLM) on a use case's scenarios.
 
@@ -802,9 +950,14 @@ async def run_live_eval(
     - Phase 1: Warm up `local_model` once -> run all draft turns back-to-back (0 model swaps).
     - Phase 2: Warm up `target_model` once -> run Baseline generation AND `<ACCEPT/>` verification
       back-to-back (0 model swaps) to measure real wall-clock speedup and acceptance rate!
+
+    `cfg.strategy` picks the arm (`accept_swap`, `prediction`, `context_only`; `auto` resolves
+    as in the proxy). `concise_baseline` gives the baseline the drafter's concise instructions.
     """
     cfg = config or SpeculativeConfig.from_env()
     es = eval_suite or get_eval_suite(cfg.usecase)
+    window = AdaptiveDraftWindow()
+    run_id = uuid.uuid4().hex[:8]
     suite = [s for s in (scenarios or es.builtin_scenarios()) if s.category != "bypass"]
 
     results: list[dict[str, Any]] = []
@@ -856,7 +1009,7 @@ async def run_live_eval(
                 )
                 continue
 
-            payload = convert_to_openai_draft_payload(sc.request_body, sc.provider, cfg)
+            payload, new_chars = local_draft_payload(window, sc.request_body, sc.provider, cfg)
             url = f"{cfg.local_base_url}/chat/completions"
             headers = {
                 "Content-Type": "application/json",
@@ -871,6 +1024,7 @@ async def run_live_eval(
                     timeout=cfg.local_timeout_seconds,
                 )
                 latency_ms = (time.perf_counter() - t0) * 1000.0
+                window.observe(new_chars, latency_ms)
                 if resp.status_code != 200:
                     results.append(
                         {
@@ -972,9 +1126,7 @@ async def run_live_eval(
             accepted_count = 0
             flawed_rejected_count = 0
 
-            target_cfg = copy.deepcopy(cfg)
-            target_cfg.local_model = target_model
-            target_cfg.strategy = "accept_swap"
+            max_tokens = max(2048, cfg.local_max_tokens)
 
             for sc, r in zip(suite, results, strict=False):
                 if r["status"] != "ok" or sc.id not in draft_objects:
@@ -982,10 +1134,16 @@ async def run_live_eval(
                 draft_obj = draft_objects[sc.id]
 
                 # 2a. Measure Baseline direct generation on Target Model
-                base_cfg = copy.deepcopy(target_cfg)
-                base_cfg.local_concise_draft_instructions = False
-                base_payload = convert_to_openai_draft_payload(
-                    sc.request_body, sc.provider, base_cfg
+                has_tools = bool(sc.request_body.get("tools"))
+                base_payload = target_chat_payload(
+                    sc.request_body,
+                    sc.provider,
+                    target_model,
+                    cfg,
+                    system_prefix=arm_prefix(
+                        "baseline", run_id, cfg, concise=concise_baseline, has_tools=has_tools
+                    ),
+                    max_tokens=max_tokens,
                 )
                 t_base0 = time.perf_counter()
                 base_resp = await client.post(
@@ -995,24 +1153,32 @@ async def run_live_eval(
                     timeout=60.0,
                 )
                 base_ms = (time.perf_counter() - t_base0) * 1000.0
-                base_tok = (
-                    int((base_resp.json().get("usage") or {}).get("completion_tokens", 0))
-                    if base_resp.status_code == 200
-                    else 0
+                base_usage = (
+                    (base_resp.json().get("usage") or {}) if base_resp.status_code == 200 else {}
+                )
+                base_tok = int(base_usage.get("completion_tokens", 0))
+                base_prompt_tok = int(base_usage.get("prompt_tokens", 0))
+                base_details = base_usage.get("prompt_tokens_details") or {}
+                base_cached_tok = int(
+                    (base_details.get("cached_tokens") or 0)
+                    if isinstance(base_details, dict)
+                    and base_details.get("cached_tokens") is not None
+                    else (base_usage.get("cache_read_input_tokens") or 0)
                 )
 
-                # 2b. Measure Speculative Verification on Target Model
-                # When verifying a draft that already contains <draft_tool_calls>,
-                # omit the `tools` array from the OpenAI verification call so the verifier
-                # emits `<ACCEPT/>` text directly instead of re-invoking the tool from scratch.
-                injected_body, _ = inject_draft_into_body(
-                    sc.request_body, sc.provider, draft_obj, base_cfg
+                # 2b. Measure Speculative Verification on Target Model. Tools stay in the
+                # request, as in the proxy, so a rejected draft can be rewritten as a tool call.
+                injected_body, mode = inject_draft_into_body(
+                    sc.request_body, sc.provider, draft_obj, cfg
                 )
-                verify_payload = convert_to_openai_draft_payload(
-                    injected_body, sc.provider, base_cfg
+                verify_payload = target_chat_payload(
+                    injected_body,
+                    sc.provider,
+                    target_model,
+                    cfg,
+                    system_prefix=arm_prefix(mode, run_id, cfg),
+                    max_tokens=max_tokens,
                 )
-                if draft_obj.tool_calls:
-                    verify_payload.pop("tools", None)
                 t_ver0 = time.perf_counter()
                 ver_resp = await client.post(
                     f"{t_url_base}/chat/completions",
@@ -1024,8 +1190,17 @@ async def run_live_eval(
                 ver_data = ver_resp.json() if ver_resp.status_code == 200 else {}
                 ver_msg = ((ver_data.get("choices") or [{}])[0]).get("message") or {}
                 ver_text = str(ver_msg.get("content") or "")
-                ver_tok = int((ver_data.get("usage") or {}).get("completion_tokens", 0))
-                accepted = response_accepted_draft(ver_text, target_cfg)
+                ver_usage = ver_data.get("usage") or {}
+                ver_tok = int(ver_usage.get("completion_tokens", 0))
+                ver_prompt_tok = int(ver_usage.get("prompt_tokens", 0))
+                ver_details = ver_usage.get("prompt_tokens_details") or {}
+                ver_cached_tok = int(
+                    (ver_details.get("cached_tokens") or 0)
+                    if isinstance(ver_details, dict)
+                    and ver_details.get("cached_tokens") is not None
+                    else (ver_usage.get("cache_read_input_tokens") or 0)
+                )
+                accepted = final_output_is_draft(mode, ver_text, cfg)
 
                 spec_e2e_ms = float(r["latency_ms"]) + verify_ms
                 total_baseline_ms += base_ms
@@ -1036,16 +1211,24 @@ async def run_live_eval(
                     flawed_rejected_count += 1
 
                 r["target_baseline_ms"] = round(base_ms, 1)
+                r["target_baseline_prompt_tokens"] = base_prompt_tok
+                r["target_baseline_cached_tokens"] = base_cached_tok
                 r["target_baseline_output_tokens"] = base_tok
                 r["target_verify_ms"] = round(verify_ms, 1)
+                r["target_verify_prompt_tokens"] = ver_prompt_tok
+                r["target_verify_cached_tokens"] = ver_cached_tok
                 r["target_verify_output_tokens"] = ver_tok
                 r["speculative_e2e_ms"] = round(spec_e2e_ms, 1)
                 r["speedup_factor"] = round(base_ms / spec_e2e_ms, 2) if spec_e2e_ms > 0 else 1.0
+                r["target_mode"] = mode
                 r["target_accepted"] = accepted
                 r["target_response_preview"] = ver_text[:120]
 
             target_summary = {
                 "target_model": target_model,
+                "strategy": cfg.strategy,
+                "concise_baseline": concise_baseline,
+                "run_id": run_id,
                 "warmup_target_ms": warmup_target_ms,
                 "baseline_total_ms": round(total_baseline_ms, 1),
                 "speculative_total_ms": round(total_spec_ms, 1),

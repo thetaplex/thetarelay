@@ -582,7 +582,7 @@ def build_verification_injection(draft: DraftResult, config: SpeculativeConfig) 
         f"If the draft is complete, accurate, and directly satisfies the request (including any "
         f"tool call names and arguments), output ONLY `{config.accept_token}` and nothing else. "
         f"If it needs any changes, ignore `{config.accept_token}` and output your full response "
-        f"or tool calls normally."
+        f"or tool calls normally, without mentioning the draft."
     )
 
 
@@ -606,14 +606,14 @@ def inject_draft_into_body(
 
     # Determine effective mode
     effective_mode = config.strategy
-    if effective_mode == "auto":
+    if effective_mode in ("auto", "prediction"):
         if provider == "openai" and draft.text.strip() and not draft.tool_calls:
             effective_mode = "prediction"
         else:
             effective_mode = "accept_swap"
 
     # Mode 1: Native OpenAI Predicted Outputs (`prediction` parameter)
-    if effective_mode == "prediction" and provider == "openai":
+    if effective_mode == "prediction":
         updated["prediction"] = {
             "type": "content",
             "content": draft.text,

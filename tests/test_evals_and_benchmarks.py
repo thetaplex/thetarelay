@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -16,12 +17,15 @@ from thetarelay.evals import (
     load_eval_scenarios_from_jsonl,
     run_ab_benchmark,
     run_live_eval,
+    target_chat_payload,
 )
 from thetarelay.usecases.coding.humaneval import (
     compute_paired_mcnemar_and_confusion,
     evaluate_humaneval_functional_pass,
+    failing_mutants,
     get_builtin_humaneval_problems,
     mutate_python_code_ast,
+    paired_difference_ci,
     run_humaneval_benchmark,
 )
 from thetarelay.usecases.coding.scenarios import (
@@ -329,3 +333,110 @@ def test_ast_mutation_and_mcnemar_confusion_matrix() -> None:
     assert cm["true_accept_rate_pct"] == 50.0
     assert cm["false_accept_rate_pct"] == 50.0
     assert cm["post_rejection_recovery_rate_pct"] == 100.0
+
+
+def test_paired_ci_does_not_collapse_without_discordant_pairs() -> None:
+    # The old Wald interval returned [0, 0] here, overstating certainty.
+    low, high = paired_difference_ci(a=20, b=0, c=0, d=0)
+    assert low < 0.0 < high
+    low, high = paired_difference_ci(a=36, b=12, c=2, d=0)
+    assert -1.0 <= low < (2 - 12) / 50 < high < 0.0
+
+
+def test_failing_mutants_only_returns_test_failing_mutants() -> None:
+    for prob in get_builtin_humaneval_problems()[:3]:
+        picked = failing_mutants(prob, 2)
+        assert picked
+        assert picked == failing_mutants(prob, 2)  # same sample every run
+        for _, src in picked:
+            assert not evaluate_humaneval_functional_pass(code_str=src, problem=prob)[0]
+
+
+def test_target_payload_keeps_full_conversation_and_tools() -> None:
+    cfg = SpeculativeConfig(local_max_context_chars=100, local_recent_messages_limit=1)
+    history = [{"role": "user", "content": "x" * 500}, {"role": "assistant", "content": "ok"}]
+    body = {
+        "system": "sys",
+        "messages": [
+            *history,
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "t1", "name": "ls", "input": {"p": "."}}],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "a"}],
+            },
+        ],
+        "tools": [
+            {"name": f"tool{i}", "description": "d" * 400, "input_schema": {}} for i in range(20)
+        ],
+    }
+    payload = target_chat_payload(body, "anthropic", "m", cfg, system_prefix="[salt]")
+    msgs = payload["messages"]
+    assert msgs[0] == {"role": "system", "content": "[salt]\n\nsys"}
+    assert msgs[1]["content"] == "x" * 500  # not windowed to the drafter's budget
+    assert msgs[3]["tool_calls"][0]["function"]["name"] == "ls"
+    assert msgs[4] == {"role": "tool", "tool_call_id": "t1", "content": "a"}
+    assert len(payload["tools"]) == 20  # not capped at the drafter's 16
+    assert len(payload["tools"][0]["function"]["description"]) == 400
+    assert payload["max_tokens"] == 2048
+
+
+@pytest.mark.asyncio
+async def test_humaneval_honours_strategy_and_salts_each_arm() -> None:
+    target_bodies: list[dict[str, Any]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body["model"] == "target":
+            target_bodies.append(body)
+        sol = get_builtin_humaneval_problems()[0].canonical_solution
+        return httpx.Response(200, json={"choices": [{"message": {"content": sol}}]})
+
+    report = await run_humaneval_benchmark(
+        SpeculativeConfig(local_base_url="http://local.test/v1", strategy="context_only"),
+        problems=get_builtin_humaneval_problems()[:1],
+        target_model="target",
+        transport=httpx.MockTransport(handler),
+        concise_baseline=True,
+        mutants=1,
+    )
+    tc = report["target_comparison"]
+    assert tc["strategy"] == "context_only"
+    assert tc["acceptance_rate_pct"] == 0.0
+    base, spec, *mutant_calls = target_bodies
+    assert mutant_calls
+    assert "You may use or refine" in spec["messages"][-1]["content"]
+    assert "DRAFTING MODE" in base["messages"][0]["content"]  # prompt-matched baseline
+    salts = {b["messages"][0]["content"].split("]")[0] for b in target_bodies}
+    assert len(salts) == 3  # baseline, speculative and mutant arms never share a cache prefix
+    assert tc["buggy_draft_guardrail_summary"]["false_accept_rate_pct"] is None
+
+
+@pytest.mark.asyncio
+async def test_live_eval_verification_keeps_tools_and_uses_proxy_window() -> None:
+    scenario = next(s for s in get_builtin_scenarios() if s.id == "anth_tool_edit_file")
+    target_bodies: list[dict[str, Any]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body["model"] == "target":
+            if body["max_tokens"] > 1:  # skip the warm-up request
+                target_bodies.append(body)
+            return httpx.Response(200, json={"choices": [{"message": {"content": "<ACCEPT/>"}}]})
+        call = {"function": {"name": "edit_file", "arguments": "{}"}}
+        msg = {"content": "", "tool_calls": [call]}
+        return httpx.Response(200, json={"choices": [{"message": msg}]})
+
+    report = await run_live_eval(
+        SpeculativeConfig(local_base_url="http://local.test/v1", strategy="accept_swap"),
+        scenarios=[scenario],
+        transport=httpx.MockTransport(handler),
+        target_model="target",
+    )
+    base, verify = target_bodies
+    assert verify["tools"] == base["tools"]  # a rejected draft can still become a tool call
+    assert base["messages"][0]["content"] != verify["messages"][0]["content"]  # per-arm salt
+    assert report["results"][0]["target_mode"] == "accept_swap"
+    assert report["two_phase_target_verification"]["strategy"] == "accept_swap"

@@ -93,8 +93,14 @@ class SpeculativeConfig:
     skip_models: tuple[str, ...] = field(default_factory=lambda: ("haiku", "mini", "nano", "flash"))
 
     def __post_init__(self) -> None:
-        # Fail at startup, not on the first request, if the use case is not known.
+        # Fail at startup, not on the first request, if the use case or strategy is not known.
         get_usecase(self.usecase)
+        valid_strategies = ("auto", "accept_swap", "prediction", "context_only")
+        if self.strategy not in valid_strategies:
+            raise ValueError(
+                f"Unknown speculative strategy {self.strategy!r}. "
+                f"Expected one of: {', '.join(valid_strategies)}"
+            )
 
     @classmethod
     def from_env(cls) -> SpeculativeConfig:

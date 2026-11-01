@@ -14,9 +14,8 @@ This list applies to version 0.1.0 and the `feat/speculative-proxy` branch. Last
 
 | Limitation | Effect |
 |---|---|
-| The `prediction` strategy works only for OpenAI text drafts. | For Anthropic requests and for tool-call drafts, thetarelay adds the `<ACCEPT/>` instruction but does not swap the response. The client can receive the text `<ACCEPT/>`. Use `auto` in place of `prediction`. |
+| The `prediction` strategy works only for OpenAI text drafts. | For Anthropic requests and for tool-call drafts, thetarelay automatically falls back to `accept_swap` so that `<ACCEPT/>` verification and response swapping work safely. |
 | The `accept_swap` strategy does not support partial acceptance. | If a draft has even a small mistake or missing parameter, the frontier model must reject the draft and write the full response from scratch. |
-| thetarelay does not validate `THETARELAY_STRATEGY`. | A value that is not valid causes the same problem as `prediction`. |
 | The Headroom extension calls the local model synchronously. | Each drafted turn can stop the Headroom process for up to `THETARELAY_LOCAL_TIMEOUT` seconds. |
 | The Headroom extension reads environment variables only. | It does not use the configuration that Headroom gives to it. |
 | The adaptive context keeps its state in memory. | After the proxy restarts, the first draft of each conversation reads the full window. The in-memory cache holds up to 64 active conversations; older conversations are evicted and restart from scratch. |

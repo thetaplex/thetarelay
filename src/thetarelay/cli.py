@@ -153,6 +153,23 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     eval_parser.add_argument(
+        "--strategy",
+        choices=["auto", "accept_swap", "prediction", "context_only"],
+        default=None,
+        help="Verification strategy arm to evaluate (default: THETARELAY_STRATEGY or auto)",
+    )
+    eval_parser.add_argument(
+        "--concise-baseline",
+        action="store_true",
+        help="Give the baseline the drafter's concise instructions (prompt-matched baseline arm)",
+    )
+    eval_parser.add_argument(
+        "--mutants",
+        type=int,
+        default=1,
+        help="Test-failing AST mutants per problem for the buggy-draft stress test (default: 1)",
+    )
+    eval_parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -218,6 +235,8 @@ def main(argv: list[str] | None = None) -> None:
                     limit=getattr(args, "limit", None),
                     target_model=getattr(args, "target_model", None),
                     target_base_url=getattr(args, "target_url", None),
+                    concise_baseline=args.concise_baseline,
+                    mutants=args.mutants,
                 )
             )
             print(json.dumps(extra_report, indent=2))
@@ -235,6 +254,7 @@ def main(argv: list[str] | None = None) -> None:
                 target_model=getattr(args, "target_model", None),
                 target_base_url=getattr(args, "target_url", None),
                 eval_suite=eval_suite,
+                concise_baseline=args.concise_baseline,
             )
         )
         print(json.dumps(eval_report, indent=2))

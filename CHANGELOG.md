@@ -8,11 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `eval --concise-baseline`: a baseline arm with the same concise instructions as the drafter.
 - `docs/reference/tested-models.md`: the frontier and local models that were tested, and which are confirmed.
 - Documentation in `docs/`: tutorial, how-to guides, reference and explanation pages (Diátaxis, ASD-STE100).
 
 ### Changed
 
+- When the target model rejects a draft, the verification instruction now tells it not to mention the draft. This prevents long critiques of rejected drafts.
 - Renamed the project from ThetaCode to ThetaRelay: package `thetarelay`, CLI `thetarelay`, environment variables `THETARELAY_*`, stats endpoint `/thetarelay/stats`, Headroom entry point `thetarelay`.
 - The start of the local draft context now moves in steps of half the message limit and half the character budget, not one message per turn. The drafting instructions (`THETARELAY_LOCAL_CONCISE_DRAFT`) are now a separate system message, not an addition to the last user message. Consecutive drafts share a prefix, so the local server can reuse its prompt cache. In a 10-turn replay on Ollama with `gemma4:e4b-mlx`, the mean draft time decreased from 4.2 s to 2.4 s.
 - Python 3.13 or later is now required (was 3.11).
@@ -22,6 +24,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- `eval` ignored `--strategy` and always ran `accept_swap`. It now runs the arm you select.
+- `eval` sent the target model the local drafter's view of the request: the last 10 messages, a trimmed system prompt, at most 16 tools with short descriptions, and no `tools` when it verified a tool-call draft. The target model now gets the full request.
+- `eval` used a fixed local context window. It now uses the adaptive window of the proxy.
+- `eval --benchmark humaneval` used only two hand-written buggy drafts. It now also sends AST mutants of the canonical solutions (`--mutants`), and sends only drafts that fail the unit tests.
+- The 95 % confidence interval of the paired accuracy difference was `[0, 0]` when no task changed result. It is now the Newcombe hybrid score interval.
+- Baseline and speculative calls in `eval` shared the provider prompt cache. Each arm now has its own system-prompt salt.
 - `eval --benchmark humaneval` stopped with an error when a local draft exceeded `THETARELAY_LOCAL_TIMEOUT`. A slow draft now counts as no draft, as in the proxy.
 - `eval --benchmark humaneval` sent the local drafting instructions ("output only a code block") to the frontier baseline. The baseline now gets the original request, so the measured savings are not understated.
 - README: the agent-trace results for `claude-opus-4.5` now match the raw data in `benchmarks/results/live_benchmark_results_2026_10_30.json`.
