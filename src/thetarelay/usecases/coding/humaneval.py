@@ -18,6 +18,8 @@ import gzip
 import json
 import math
 import multiprocessing
+import os
+import textwrap
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -398,6 +400,16 @@ def load_humaneval_from_file(path: Path) -> list[HumanEvalProblem]:
     return problems
 
 
+def _extract_cached_tokens(usage: dict[str, Any]) -> int:
+    """Extract cached input token count across OpenAI, Anthropic, and OpenRouter usage formats."""
+    details = usage.get("prompt_tokens_details") or {}
+    if isinstance(details, dict) and details.get("cached_tokens") is not None:
+        return int(details.get("cached_tokens") or 0)
+    if usage.get("cache_read_input_tokens") is not None:
+        return int(usage.get("cache_read_input_tokens") or 0)
+    return 0
+
+
 def _exec_candidate_worker(
     code_str: str,
     prompt_str: str,
@@ -410,7 +422,11 @@ def _exec_candidate_worker(
         extracted = extract_python_code_blocks(code_str)
         # Prepend prompt header if the model output only the body or omitted typing imports
         if f"def {entry_point}" not in extracted:
-            full_source = prompt_str + "\n" + extracted
+            non_empty_lines = [line for line in extracted.splitlines() if line.strip()]
+            body_text = extracted
+            if non_empty_lines and not non_empty_lines[0].startswith((" ", "\t")):
+                body_text = textwrap.indent(extracted, "    ")
+            full_source = prompt_str.rstrip("\r\n") + "\n" + body_text
         else:
             import_lines = [
                 line
@@ -647,6 +663,7 @@ async def run_humaneval_benchmark(
     target_model: str | None = None,
     target_base_url: str | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
+    concise_baseline: bool | None = None,
 ) -> dict[str, Any]:
     """Run the standard HumanEval coding benchmark comparing:
     - Local Drafter `pass@1`
@@ -655,13 +672,16 @@ async def run_humaneval_benchmark(
     - Buggy-Draft Guardrail Stress Test (verifier rejects subtly buggy drafts and recovers `pass@1`)
     """
     cfg = config or SpeculativeConfig.from_env()
+    if concise_baseline is None:
+        concise_env = os.environ.get("THETARELAY_EVAL_CONCISE_BASELINE", "").strip().lower()
+        use_concise_baseline = concise_env in ("1", "true", "yes", "on")
+    else:
+        use_concise_baseline = concise_baseline
     suite = list(problems or get_builtin_humaneval_problems())
     if limit is not None and limit > 0:
         suite = suite[:limit]
 
     # Ensure target_api_key can be passed via env (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, etc.)
-    import os
-
     target_api_key = (
         os.environ.get("THETARELAY_TARGET_API_KEY")
         or os.environ.get("OPENROUTER_API_KEY")
@@ -761,9 +781,13 @@ async def run_humaneval_benchmark(
             target_cfg = copy.deepcopy(cfg)
             target_cfg.local_model = target_model
             target_cfg.strategy = "accept_swap"
-            # The frontier gets the original request: no local drafting instructions, so the
-            # baseline answers as it would without thetarelay.
-            target_cfg.local_concise_draft_instructions = False
+            # Ensure frontier baseline and rejection rewrites are not truncated at the local
+            # drafter's 384-token budget when generating full explanations + code.
+            target_cfg.local_max_tokens = max(2048, cfg.local_max_tokens)
+            # By default, the frontier baseline gets the original request without local drafting
+            # instructions; set `concise_baseline=True` (or THETARELAY_EVAL_CONCISE_BASELINE=1)
+            # for a prompt-matched concise baseline ablation.
+            target_cfg.local_concise_draft_instructions = use_concise_baseline
 
             base_pass_count = 0
             spec_pass_count = 0
@@ -772,6 +796,10 @@ async def run_humaneval_benchmark(
             total_spec_ms = 0.0
             total_base_out_tok = 0
             total_spec_out_tok = 0
+            total_base_prompt_tok = 0
+            total_base_cached_tok = 0
+            total_spec_prompt_tok = 0
+            total_spec_cached_tok = 0
 
             for prob, row in zip(suite, task_rows, strict=False):
                 req_body = {
@@ -801,7 +829,10 @@ async def run_humaneval_benchmark(
                 base_text = str(
                     (((b_data.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
                 )
-                base_tok = int((b_data.get("usage") or {}).get("completion_tokens", 0))
+                b_usage = b_data.get("usage") or {}
+                base_tok = int(b_usage.get("completion_tokens", 0))
+                base_prompt_tok = int(b_usage.get("prompt_tokens", 0))
+                base_cached_tok = _extract_cached_tokens(b_usage)
                 base_passed, base_err = evaluate_humaneval_functional_pass(
                     code_str=base_text, problem=prob
                 )
@@ -809,6 +840,7 @@ async def run_humaneval_benchmark(
                 # 2b. Speculative Verification Run
                 draft_obj = draft_map[prob.task_id]
                 ver_cfg = copy.deepcopy(target_cfg)
+                ver_cfg.local_concise_draft_instructions = False
                 injected_body, _ = inject_draft_into_body(req_body, "anthropic", draft_obj, ver_cfg)
                 ver_payload = convert_to_openai_draft_payload(injected_body, "anthropic", ver_cfg)
                 t_v0 = time.perf_counter()
@@ -823,7 +855,10 @@ async def run_humaneval_benchmark(
                 ver_text = str(
                     (((v_data.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
                 )
-                ver_tok = int((v_data.get("usage") or {}).get("completion_tokens", 0))
+                v_usage = v_data.get("usage") or {}
+                ver_tok = int(v_usage.get("completion_tokens", 0))
+                ver_prompt_tok = int(v_usage.get("prompt_tokens", 0))
+                ver_cached_tok = _extract_cached_tokens(v_usage)
                 accepted = response_accepted_draft(ver_text, ver_cfg)
 
                 # Final speculative output is local draft if `<ACCEPT/>`, else target's rewrite!
@@ -837,6 +872,10 @@ async def run_humaneval_benchmark(
                 total_spec_ms += spec_e2e_ms
                 total_base_out_tok += base_tok
                 total_spec_out_tok += ver_tok
+                total_base_prompt_tok += base_prompt_tok
+                total_base_cached_tok += base_cached_tok
+                total_spec_prompt_tok += ver_prompt_tok
+                total_spec_cached_tok += ver_cached_tok
                 if base_passed:
                     base_pass_count += 1
                 if spec_passed:
@@ -847,10 +886,14 @@ async def run_humaneval_benchmark(
                 row.update(
                     {
                         "baseline_ms": round(base_ms, 1),
+                        "baseline_prompt_tokens": base_prompt_tok,
+                        "baseline_cached_tokens": base_cached_tok,
                         "baseline_output_tokens": base_tok,
                         "baseline_pass_at_1": base_passed,
                         "baseline_eval_status": base_err,
                         "target_verify_ms": round(verify_ms, 1),
+                        "target_verify_prompt_tokens": ver_prompt_tok,
+                        "target_verify_cached_tokens": ver_cached_tok,
                         "target_verify_output_tokens": ver_tok,
                         "target_accepted": accepted,
                         "speculative_e2e_ms": round(spec_e2e_ms, 1),
@@ -884,6 +927,7 @@ async def run_humaneval_benchmark(
                     ],
                 }
                 ver_cfg = copy.deepcopy(target_cfg)
+                ver_cfg.local_concise_draft_instructions = False
                 bug_draft_obj = DraftResult(
                     text=f"```python\n{bprob.buggy_draft}```",
                     latency_ms=200.0,
@@ -919,6 +963,7 @@ async def run_humaneval_benchmark(
             paired_stats = compute_paired_mcnemar_and_confusion(task_rows)
             target_summary = {
                 "target_model": target_model,
+                "concise_baseline": use_concise_baseline,
                 "warmup_target_ms": warmup_target_ms,
                 "baseline_pass_at_1_pct": round((base_pass_count / n) * 100.0, 1),
                 "speculative_pass_at_1_pct": round((spec_pass_count / n) * 100.0, 1),
@@ -929,7 +974,11 @@ async def run_humaneval_benchmark(
                 "overall_speedup_factor": (
                     round(total_base_ms / total_spec_ms, 2) if total_spec_ms > 0 else 1.0
                 ),
+                "baseline_target_prompt_tokens": total_base_prompt_tok,
+                "baseline_target_cached_tokens": total_base_cached_tok,
                 "baseline_target_output_tokens": total_base_out_tok,
+                "speculative_target_prompt_tokens": total_spec_prompt_tok,
+                "speculative_target_cached_tokens": total_spec_cached_tok,
                 "speculative_target_output_tokens": total_spec_out_tok,
                 "target_output_token_reduction_pct": (
                     round(

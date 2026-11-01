@@ -295,30 +295,46 @@ def get_builtin_scenarios() -> list[EvalScenario]:
 
 def extract_python_code_blocks(text: str) -> str:
     """Extract Python code from markdown ```python ... ``` fences if present."""
-    stripped = text.strip()
+    stripped = text.strip("\r\n")
     fence_matches: list[str] = re.findall(
-        r"```(?:python|py)?\s*\n(.*?)```", stripped, flags=re.DOTALL
+        r"```(?:python|py)?[ \t]*\n(.*?)```", stripped, flags=re.DOTALL
     )
+    if not fence_matches:
+        # Handle unclosed trailing markdown fence (e.g., if response was truncated mid-block)
+        unclosed = re.search(r"```(?:python|py)?[ \t]*\n(.*)$", stripped, flags=re.DOTALL)
+        if unclosed:
+            fence_matches = [unclosed.group(1)]
+
     if fence_matches:
-        joined = "\n\n".join(m.strip() for m in fence_matches)
+        # When multiple fences exist (e.g. function definition in one fence and usage/test
+        # example in another, or critique followed by fixed function), prefer the last
+        # syntactically valid block that defines a function or class.
+        if len(fence_matches) > 1:
+            for block in reversed(fence_matches):
+                candidate = block.strip("\r\n")
+                with contextlib.suppress(SyntaxError):
+                    ast.parse(candidate)
+                    if "def " in candidate or "class " in candidate:
+                        return candidate
+
+        joined = "\n\n".join(m.strip("\r\n") for m in fence_matches)
         with contextlib.suppress(SyntaxError):
             ast.parse(joined)
             return joined
-        # When a model critiques a snippet in one fence and provides the complete function
-        # in a later fence, prefer the last syntactically valid block containing `def `.
+
         for block in reversed(fence_matches):
-            candidate = block.strip()
+            candidate = block.strip("\r\n")
             with contextlib.suppress(SyntaxError):
                 ast.parse(candidate)
                 if "def " in candidate:
                     return candidate
         for block in reversed(fence_matches):
-            candidate = block.strip()
+            candidate = block.strip("\r\n")
             with contextlib.suppress(SyntaxError):
                 ast.parse(candidate)
                 return candidate
-        return fence_matches[-1].strip()
-    return stripped
+        return fence_matches[-1].strip("\r\n")
+    return stripped.strip()
 
 
 def verify_code_and_tool_accuracy(

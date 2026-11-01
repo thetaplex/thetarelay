@@ -975,6 +975,7 @@ async def run_live_eval(
             target_cfg = copy.deepcopy(cfg)
             target_cfg.local_model = target_model
             target_cfg.strategy = "accept_swap"
+            target_cfg.local_max_tokens = max(2048, cfg.local_max_tokens)
 
             for sc, r in zip(suite, results, strict=False):
                 if r["status"] != "ok" or sc.id not in draft_objects:
@@ -995,10 +996,17 @@ async def run_live_eval(
                     timeout=60.0,
                 )
                 base_ms = (time.perf_counter() - t_base0) * 1000.0
-                base_tok = (
-                    int((base_resp.json().get("usage") or {}).get("completion_tokens", 0))
-                    if base_resp.status_code == 200
-                    else 0
+                base_usage = (
+                    (base_resp.json().get("usage") or {}) if base_resp.status_code == 200 else {}
+                )
+                base_tok = int(base_usage.get("completion_tokens", 0))
+                base_prompt_tok = int(base_usage.get("prompt_tokens", 0))
+                base_details = base_usage.get("prompt_tokens_details") or {}
+                base_cached_tok = int(
+                    (base_details.get("cached_tokens") or 0)
+                    if isinstance(base_details, dict)
+                    and base_details.get("cached_tokens") is not None
+                    else (base_usage.get("cache_read_input_tokens") or 0)
                 )
 
                 # 2b. Measure Speculative Verification on Target Model
@@ -1024,7 +1032,16 @@ async def run_live_eval(
                 ver_data = ver_resp.json() if ver_resp.status_code == 200 else {}
                 ver_msg = ((ver_data.get("choices") or [{}])[0]).get("message") or {}
                 ver_text = str(ver_msg.get("content") or "")
-                ver_tok = int((ver_data.get("usage") or {}).get("completion_tokens", 0))
+                ver_usage = ver_data.get("usage") or {}
+                ver_tok = int(ver_usage.get("completion_tokens", 0))
+                ver_prompt_tok = int(ver_usage.get("prompt_tokens", 0))
+                ver_details = ver_usage.get("prompt_tokens_details") or {}
+                ver_cached_tok = int(
+                    (ver_details.get("cached_tokens") or 0)
+                    if isinstance(ver_details, dict)
+                    and ver_details.get("cached_tokens") is not None
+                    else (ver_usage.get("cache_read_input_tokens") or 0)
+                )
                 accepted = response_accepted_draft(ver_text, target_cfg)
 
                 spec_e2e_ms = float(r["latency_ms"]) + verify_ms
@@ -1036,8 +1053,12 @@ async def run_live_eval(
                     flawed_rejected_count += 1
 
                 r["target_baseline_ms"] = round(base_ms, 1)
+                r["target_baseline_prompt_tokens"] = base_prompt_tok
+                r["target_baseline_cached_tokens"] = base_cached_tok
                 r["target_baseline_output_tokens"] = base_tok
                 r["target_verify_ms"] = round(verify_ms, 1)
+                r["target_verify_prompt_tokens"] = ver_prompt_tok
+                r["target_verify_cached_tokens"] = ver_cached_tok
                 r["target_verify_output_tokens"] = ver_tok
                 r["speculative_e2e_ms"] = round(spec_e2e_ms, 1)
                 r["speedup_factor"] = round(base_ms / spec_e2e_ms, 2) if spec_e2e_ms > 0 else 1.0
