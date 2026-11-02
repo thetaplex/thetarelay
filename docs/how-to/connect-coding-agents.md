@@ -1,10 +1,11 @@
 # How to connect a coding agent
 
-Set the base URL of the agent to the proxy address. The agent continues to send its own API key.
-thetarelay forwards the key to the provider. thetarelay does not store the key.
+Set the base URL of the agent to the proxy address. The default address is
+`http://127.0.0.1:8788`.
 
-The examples use port `8787`. This is the port in [Run thetarelay with Headroom](run-with-headroom.md).
-The default port of `thetarelay proxy` alone is `8788`.
+ThetaRelay sends the frontier key (`OPENROUTER_API_KEY` or `THETARELAY_FRONTIER_API_KEY`) to
+the frontier tier in place of the key of the agent. If neither variable is set, it sends the
+key of the agent. It never sends a key to the local tier.
 
 ## Agents that use the Anthropic Messages API
 
@@ -13,10 +14,10 @@ Examples: Claude Code, Pi, OpenCode with an Anthropic provider.
 1. Set the base URL. Do not add `/v1`:
 
    ```sh
-   export ANTHROPIC_BASE_URL=http://127.0.0.1:8787
+   export ANTHROPIC_BASE_URL=http://127.0.0.1:8788
    ```
 
-2. Start the agent in the same shell.
+2. Start the agent.
 
 ## Agents that use the OpenAI Chat Completions API
 
@@ -25,38 +26,21 @@ Examples: OpenCode, Pi, Aider and Cursor with an OpenAI provider.
 1. Set the base URL. Add `/v1`:
 
    ```sh
-   export OPENAI_BASE_URL=http://127.0.0.1:8787/v1
+   export OPENAI_BASE_URL=http://127.0.0.1:8788/v1
    ```
 
-2. Start the agent in the same shell.
+2. Start the agent.
 
-thetarelay supports the Chat Completions endpoint only. It does not support the OpenAI Responses
-API.
+## Make sure that routing works
 
-## Make sure that the connection works
-
-1. Send one coding prompt from the agent.
-2. Get the statistics:
+1. Start the proxy with `--debug`.
+2. Send one request from the agent.
+3. Make sure that the proxy prints a line with `→ local` or `→ frontier`.
+4. Show the request counts:
 
    ```sh
-   curl http://127.0.0.1:8787/thetarelay/stats
+   curl http://127.0.0.1:8788/stats
    ```
 
-3. Make sure that `requests_total` in `metrics` is more than 0.
-
-If `drafts_failed` increases, thetarelay cannot get a draft from the local model. Make sure that the
-local model server runs and that `THETARELAY_LOCAL_MODEL` is correct.
-
-## Multi-turn conversations and adaptive context
-
-Coding agents make multiple turns during one session (for example editing files, running tests,
-and reading tool outputs).
-
-With adaptive context enabled (default):
-
-- On the first turn of a task, the local server reads the initial prompt and system message.
-- On later turns, the adaptive draft window keeps the conversation prefix stable. The local
-  server reuses its prompt cache and reads only the new turn tokens, reducing draft latency.
-- If a tool returns very large output (such as large file diffs or build logs) that cannot be
-  read within `THETARELAY_LOCAL_TIMEOUT`, ThetaRelay restarts the window from the newest messages
-  that fit in time, preventing timeouts.
+The model name that the agent sends has no effect. ThetaRelay replaces it with the model of the
+tier.

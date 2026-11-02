@@ -1,11 +1,13 @@
-"""Configuration for ThetaRelay speculative proxy and Headroom extension."""
+"""Configuration of the ThetaRelay routing proxy. Every value has an environment variable."""
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from .usecases import DEFAULT_USECASE, get_usecase
+
+def _env(name: str, default: str) -> str:
+    return os.environ.get(name, default).strip()
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -16,126 +18,86 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def _env_int(name: str, default: int) -> int:
-    val = os.environ.get(name)
-    if val is None:
-        return default
     try:
-        return int(val)
+        return int(os.environ.get(name, default))
     except ValueError:
         return default
 
 
 def _env_float(name: str, default: float) -> float:
-    val = os.environ.get(name)
-    if val is None:
-        return default
     try:
-        return float(val)
+        return float(os.environ.get(name, default))
     except ValueError:
         return default
 
 
 @dataclass
-class SpeculativeConfig:
-    """Configuration for local draft generation and target model verification."""
+class RouterConfig:
+    """Where requests go and how the judge chooses between the local and frontier tiers."""
 
-    # Server settings (when running as standalone proxy)
     host: str = "127.0.0.1"
     port: int = 8788
 
-    # Upstream target API URLs
-    anthropic_upstream_url: str = "https://api.anthropic.com"
-    openai_upstream_url: str = "https://api.openai.com"
-
-    # Local Draft Model settings (OpenAI-compatible endpoint: Ollama, MLX, llama.cpp, vLLM)
-    local_base_url: str = "http://127.0.0.1:11434/v1"
+    # Easy tier: a server with the Anthropic Messages and OpenAI Chat Completions APIs (Ollama).
+    # Base URL without `/v1`.
+    local_base_url: str = "http://127.0.0.1:11434"
     local_model: str = "gemma4:e4b"
-    local_api_key: str = "local"
-    local_timeout_seconds: float = 5.0
-    local_max_tokens: int = 384
-    local_temperature: float = 0.0
     local_disable_thinking: bool = True
-    local_concise_draft_instructions: bool = True
+    # Requests larger than this (characters of system + messages + tools) go to the frontier
+    # tier, because the local model cannot read them. About 4 characters per token.
+    local_max_request_chars: int = 100_000
 
-    # Context window trimming for the local model so prefill stays sub-second
-    local_max_context_chars: int = 64000
-    # Size the window per conversation by measured read speed (proxy and Headroom only)
-    local_adaptive_context: bool = True
-    local_recent_messages_limit: int = 10
+    # Hard tier: a server with both APIs (OpenRouter). Base URL without `/v1`.
+    frontier_base_url: str = "https://openrouter.ai/api"
+    frontier_model: str = "openai/gpt-6.1-terra"
+    # Empty: forward the client's own credentials unchanged.
+    frontier_api_key: str = ""
 
-    # Speculative strategy:
-    # - "auto": `prediction` for OpenAI text, `<ACCEPT/>` verification for Anthropic & tools
-    # - "accept_swap": `<ACCEPT/>` verification + instant draft swap on both Anthropic and OpenAI
-    # - "prediction": OpenAI `prediction` parameter only
-    # - "context_only": Inject `<speculative_draft>` without `<ACCEPT/>` short-circuiting
-    strategy: str = "auto"
+    # Judge: an endpoint with the decision API: Ollama `/v1/systemone` (tev1), or OpenRouter
+    # `/api/alpha/decisions` (`typesafe/jev-1.14`, needs `judge_api_key`).
+    judge_url: str = "http://127.0.0.1:11434/v1/systemone"
+    judge_model: str = "tev1"
+    judge_api_key: str = ""
+    judge_timeout_seconds: float = 10.0
+    # Route to the local tier only when the judge gives P(easy) above this value.
+    easy_threshold: float = 0.7
+    # After a failed tool result, keep this many requests of the conversation on the frontier.
+    stay_requests: int = 6
 
-    # Kind of agent being served. Selects the domain-specific drafting prompts in
-    # `thetarelay.usecases`. Only "coding" exists today; add use cases there for other agents.
-    usecase: str = DEFAULT_USECASE
-
-    # Selective speculation: only draft on substantive turns (long enough prompts)
-    selective_speculation: bool = True
-    min_prompt_chars_for_draft: int = 15
-
-    # Enable Headroom in-process CompressionMiddleware when running standalone
+    turn_log_path: str = ""
+    debug: bool = False
     enable_headroom_middleware: bool = True
 
-    # Token marker used for fast verification short-circuiting
-    accept_token: str = "<ACCEPT/>"  # noqa: S105
-
-    # Estimated token prices ($ per 1M tokens) and throughput for savings/latency attribution
-    estimated_input_usd_per_million: float = 3.0
-    estimated_output_usd_per_million: float = 15.0
-    estimated_frontier_output_tps: float = 65.0
-
-    # Excluded model substrings (e.g., haiku or small fast models that don't need drafting)
-    skip_models: tuple[str, ...] = field(default_factory=lambda: ("haiku", "mini", "nano", "flash"))
-
     def __post_init__(self) -> None:
-        # Fail at startup, not on the first request, if the use case or strategy is not known.
-        get_usecase(self.usecase)
-        valid_strategies = ("auto", "accept_swap", "prediction", "context_only")
-        if self.strategy not in valid_strategies:
-            raise ValueError(
-                f"Unknown speculative strategy {self.strategy!r}. "
-                f"Expected one of: {', '.join(valid_strategies)}"
-            )
+        if not 0.0 <= self.easy_threshold <= 1.0:
+            raise ValueError(f"easy_threshold must be between 0 and 1, got {self.easy_threshold}")
 
     @classmethod
-    def from_env(cls) -> SpeculativeConfig:
-        skip_raw = os.environ.get("THETARELAY_SKIP_MODELS", "haiku,mini,nano,flash")
-        skip_models = tuple(s.strip().lower() for s in skip_raw.split(",") if s.strip())
+    def from_env(cls) -> RouterConfig:
         return cls(
-            host=os.environ.get("THETARELAY_HOST", "127.0.0.1"),
-            port=_env_int("THETARELAY_PORT", 8788),
-            anthropic_upstream_url=os.environ.get(
-                "THETARELAY_ANTHROPIC_UPSTREAM", "https://api.anthropic.com"
-            ).rstrip("/"),
-            openai_upstream_url=os.environ.get(
-                "THETARELAY_OPENAI_UPSTREAM", "https://api.openai.com"
-            ).rstrip("/"),
-            local_base_url=os.environ.get(
-                "THETARELAY_LOCAL_BASE_URL", "http://127.0.0.1:11434/v1"
-            ).rstrip("/"),
-            local_model=os.environ.get("THETARELAY_LOCAL_MODEL", "gemma4:e4b"),
-            local_api_key=os.environ.get("THETARELAY_LOCAL_API_KEY", "local"),
-            local_timeout_seconds=_env_float("THETARELAY_LOCAL_TIMEOUT", 5.0),
-            local_max_tokens=_env_int("THETARELAY_LOCAL_MAX_TOKENS", 384),
-            local_temperature=_env_float("THETARELAY_LOCAL_TEMPERATURE", 0.0),
-            local_disable_thinking=_env_bool("THETARELAY_LOCAL_DISABLE_THINKING", True),
-            local_concise_draft_instructions=_env_bool("THETARELAY_LOCAL_CONCISE_DRAFT", True),
-            local_max_context_chars=_env_int("THETARELAY_LOCAL_MAX_CONTEXT_CHARS", 64000),
-            local_adaptive_context=_env_bool("THETARELAY_LOCAL_ADAPTIVE_CONTEXT", True),
-            local_recent_messages_limit=_env_int("THETARELAY_LOCAL_RECENT_MESSAGES", 10),
-            strategy=os.environ.get("THETARELAY_STRATEGY", "auto").strip().lower(),
-            usecase=os.environ.get("THETARELAY_USECASE", DEFAULT_USECASE).strip().lower(),
-            selective_speculation=_env_bool("THETARELAY_SELECTIVE", True),
-            min_prompt_chars_for_draft=_env_int("THETARELAY_MIN_PROMPT_CHARS", 15),
+            host=_env("THETARELAY_HOST", cls.host),
+            port=_env_int("THETARELAY_PORT", cls.port),
+            local_base_url=_env("THETARELAY_LOCAL_BASE_URL", cls.local_base_url).rstrip("/"),
+            local_model=_env("THETARELAY_LOCAL_MODEL", cls.local_model),
+            local_disable_thinking=_env_bool(
+                "THETARELAY_LOCAL_DISABLE_THINKING", cls.local_disable_thinking
+            ),
+            local_max_request_chars=_env_int(
+                "THETARELAY_LOCAL_MAX_REQUEST_CHARS", cls.local_max_request_chars
+            ),
+            frontier_base_url=_env("THETARELAY_FRONTIER_BASE_URL", cls.frontier_base_url).rstrip(
+                "/"
+            ),
+            frontier_model=_env("THETARELAY_FRONTIER_MODEL", cls.frontier_model),
+            frontier_api_key=_env("THETARELAY_FRONTIER_API_KEY", "")
+            or _env("OPENROUTER_API_KEY", ""),
+            judge_url=_env("THETARELAY_JUDGE_URL", cls.judge_url),
+            judge_model=_env("THETARELAY_JUDGE_MODEL", cls.judge_model),
+            judge_api_key=_env("THETARELAY_JUDGE_API_KEY", ""),
+            judge_timeout_seconds=_env_float("THETARELAY_JUDGE_TIMEOUT", cls.judge_timeout_seconds),
+            easy_threshold=_env_float("THETARELAY_EASY_THRESHOLD", cls.easy_threshold),
+            stay_requests=_env_int("THETARELAY_STAY_REQUESTS", cls.stay_requests),
+            turn_log_path=_env("THETARELAY_TURN_LOG", ""),
+            debug=_env_bool("THETARELAY_DEBUG", False),
             enable_headroom_middleware=_env_bool("THETARELAY_HEADROOM_MIDDLEWARE", True),
-            accept_token=os.environ.get("THETARELAY_ACCEPT_TOKEN", "<ACCEPT/>").strip(),
-            estimated_input_usd_per_million=_env_float("THETARELAY_INPUT_USD_PER_M", 3.0),
-            estimated_output_usd_per_million=_env_float("THETARELAY_OUTPUT_USD_PER_M", 15.0),
-            estimated_frontier_output_tps=_env_float("THETARELAY_FRONTIER_OUTPUT_TPS", 65.0),
-            skip_models=skip_models,
         )

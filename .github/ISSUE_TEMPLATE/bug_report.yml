@@ -35,5 +35,5 @@ body:
   - type: input
     id: target
     attributes:
-      label: Local drafter and frontier model
+      label: Judge, local and frontier models
       placeholder: ollama gemma4:e4b / claude-sonnet-4-5

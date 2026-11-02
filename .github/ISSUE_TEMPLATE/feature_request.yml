@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest a change, a new speculative strategy, or a new provider integration.
+description: Suggest a change, a new routing rule, or a new provider integration.
 labels: [enhancement]
 body:
   - type: textarea

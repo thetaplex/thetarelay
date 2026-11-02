@@ -1,0 +1,59 @@
+{"label":"easy","task":"Add a --verbose flag to the CLI","last":"[user] Show me src/cli.py"}
+{"label":"easy","task":"Add a --verbose flag to the CLI","last":"[tool ls] src/: cli.py config.py engine.py proxy.py"}
+{"label":"easy","task":"Fix the failing date test","last":"[tool grep 'def parse_date'] src/dates.py:41: def parse_date(s: str) -> date:"}
+{"label":"easy","task":"Rename the helper get_cfg to load_config everywhere","last":"[tool grep 'get_cfg'] src/a.py:3, src/b.py:10, tests/test_a.py:7"}
+{"label":"easy","task":"Update the README install section","last":"[user] Change 'pip install thetarelay' to 'uv add thetarelay' in README.md"}
+{"label":"easy","task":"Bump the version","last":"[user] Set version to 0.2.0 in pyproject.toml"}
+{"label":"easy","task":"Explore the repo","last":"[user] What does the justfile check recipe run?"}
+{"label":"easy","task":"Explore the repo","last":"[tool read_file justfile] check: lint test\nlint:\n  uv run ruff check ."}
+{"label":"easy","task":"Run the tests","last":"[tool bash 'just test'] 32 passed in 11.2s"}
+{"label":"easy","task":"Add a type hint","last":"[user] Add a return type of -> None to def main() in cli.py"}
+{"label":"easy","task":"Find where the port is configured","last":"[tool grep 'port'] src/config.py:45: port: int = 8788"}
+{"label":"easy","task":"Fix a typo","last":"[user] 'recieve' is misspelled in docs/how-to/run.md line 12, fix it"}
+{"label":"easy","task":"Check git state","last":"[user] Which branch am I on?"}
+{"label":"easy","task":"Add a .gitignore entry","last":"[user] Add .DS_Store to .gitignore"}
+{"label":"easy","task":"Read the config","last":"[tool read_file config.py] class SpeculativeConfig: host: str = '127.0.0.1' port: int = 8788"}
+{"label":"easy","task":"List the open TODOs","last":"[tool grep 'TODO'] src/proxy.py:88 TODO: retry; src/engine.py:12 TODO: docs"}
+{"label":"easy","task":"Format the code","last":"[user] Run the formatter"}
+{"label":"easy","task":"Explain a flag","last":"[user] What does --strict-markers do in pytest?"}
+{"label":"easy","task":"Add a log line","last":"[user] Add logger.info('started') at the top of main() in cli.py"}
+{"label":"easy","task":"Commit the change","last":"[tool bash 'git diff --stat'] README.md | 2 +- ; 1 file changed"}
+{"label":"easy","task":"Update a dependency pin","last":"[user] Change httpx>=0.27 to httpx>=0.28 in pyproject.toml"}
+{"label":"easy","task":"Find the test for parse_port","last":"[tool grep 'parse_port' tests] tests/test_net.py:5: def test_parse_port_valid"}
+{"label":"easy","task":"Show recent commits","last":"[user] Show me the last 5 commits"}
+{"label":"easy","task":"Delete an unused import","last":"[tool bash 'ruff check'] src/evals.py:3: F401 'os' imported but unused"}
+{"label":"easy","task":"Read a file before editing","last":"[assistant] I'll look at the streaming module first."}
+{"label":"easy","task":"Add a changelog line","last":"[user] Add '- Fixed typo in run guide' under Fixed in CHANGELOG.md"}
+{"label":"easy","task":"Check the Python version","last":"[user] What Python version does pyproject.toml require?"}
+{"label":"easy","task":"Create an empty test file","last":"[user] Create tests/test_router.py with a placeholder test that passes"}
+{"label":"easy","task":"Search docs","last":"[tool grep 'THETARELAY_STRATEGY' docs] docs/reference/configuration.md:41"}
+{"label":"easy","task":"Run lint","last":"[tool bash 'just lint'] All checks passed!"}
+{"label":"hard","task":"Fix the failing date test","last":"[tool bash 'just test'] FAILED tests/test_dates.py::test_dst - AssertionError: 2026-03-29 01:00 != 2026-03-29 02:00"}
+{"label":"hard","task":"Make the proxy faster","last":"[user] Requests take 4s, find out why and fix it"}
+{"label":"hard","task":"Design a plugin system","last":"[user] Design how third-party use cases register with thetarelay, propose the interface"}
+{"label":"hard","task":"Fix race condition","last":"[user] Under load, two drafts for the same conversation overwrite each other's window state. Fix it."}
+{"label":"hard","task":"Refactor the engine","last":"[user] Split engine.py into drafting, verification and metrics modules without breaking imports"}
+{"label":"hard","task":"Debug flaky test","last":"[tool bash 'pytest -x' run 3/5] FAILED tests/test_stream.py::test_intercept - TimeoutError (passes on rerun)"}
+{"label":"hard","task":"Implement streaming support","last":"[user] Add SSE streaming to the OpenAI route with the same accept/swap interception as Anthropic"}
+{"label":"hard","task":"Security review","last":"[user] Check whether any code path can log API keys"}
+{"label":"hard","task":"Fix memory leak","last":"[tool bash 'ps'] thetarelay RSS grew from 120MB to 2.1GB over 3 hours"}
+{"label":"hard","task":"Migrate to new API","last":"[user] Move all OpenAI calls from Chat Completions to the Responses API"}
+{"label":"hard","task":"Write the router","last":"[user] Implement routing between gemma4 and Terra with escalation on test failure and hysteresis"}
+{"label":"hard","task":"Fix the failing date test","last":"[tool read_file src/dates.py] def parse_date(s): return datetime.strptime(s, FMT).replace(tzinfo=LOCAL) # DST?"}
+{"label":"hard","task":"Optimise the SQL query","last":"[tool bash 'EXPLAIN ANALYZE'] Seq Scan on events (rows=48M) Filter: user_id = 42, 9.8s"}
+{"label":"hard","task":"Resolve merge conflict","last":"[tool bash 'git status'] both modified: src/proxy.py, src/engine.py (14 conflict hunks)"}
+{"label":"hard","task":"Explain an architecture decision","last":"[user] Should the window state live in the proxy or in Redis? Weigh the trade-offs."}
+{"label":"hard","task":"Fix type errors after upgrade","last":"[tool bash 'mypy src'] Found 37 errors in 9 files after upgrading pydantic to v3"}
+{"label":"hard","task":"Add retries","last":"[user] Add retries with backoff to upstream calls, but never retry non-idempotent streaming requests mid-stream"}
+{"label":"hard","task":"Debug wrong output","last":"[user] The proxy sometimes returns the draft even when the frontier model rejected it. Find the cause."}
+{"label":"hard","task":"Write a migration","last":"[user] Write a DB migration that splits the name column into first and last without downtime"}
+{"label":"hard","task":"Implement caching","last":"[user] Add an LRU cache for draft results keyed by conversation prefix, invalidated correctly on edits"}
+{"label":"hard","task":"Fix CI","last":"[tool bash 'gh run view'] ubuntu passes, windows fails: PermissionError on temp file cleanup in test_turn_log"}
+{"label":"hard","task":"Port to another language","last":"[user] Port the streaming interceptor to TypeScript for a Node version of the proxy"}
+{"label":"hard","task":"Investigate cost spike","last":"[user] Our OpenRouter bill doubled this week, figure out which change caused it"}
+{"label":"hard","task":"Make the proxy faster","last":"[tool bash 'py-spy top'] 61% json.dumps in inject_draft_into_body, 22% copy.deepcopy"}
+{"label":"hard","task":"Concurrency bug","last":"[tool bash 'pytest'] FAILED test_parallel - assert 9 == 10 (one turn missing from log)"}
+{"label":"hard","task":"Review a PR","last":"[user] Review PR #4 for correctness and tell me what could break"}
+{"label":"hard","task":"Write tests for edge cases","last":"[user] Write property-based tests for the Newcombe interval covering all degenerate tables"}
+{"label":"hard","task":"Fix the failing date test","last":"[assistant] My previous fix didn't work; the test still fails with the same DST offset."}
+{"label":"hard","task":"Upgrade framework","last":"[user] Upgrade FastAPI from 0.115 to 1.0 and fix whatever breaks"}
