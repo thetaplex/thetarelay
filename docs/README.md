@@ -6,6 +6,7 @@ The text follows ASD-STE100 Simplified Technical English. Dates use ISO 8601.
 ## How-to guides
 
 - [Connect a coding agent](how-to/connect-coding-agents.md)
+- [Set up Pi with ThetaRelay, Headroom, RTK and skills](how-to/set-up-pi.md)
 
 ## Reference
 
