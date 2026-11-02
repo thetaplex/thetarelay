@@ -80,6 +80,12 @@ def _usage(provider: str, data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _has_tool_call(raw: bytes) -> bool:
+    """True if a buffered OpenAI or Anthropic reply (JSON or SSE) contains a tool call."""
+    flat = raw.replace(b" ", b"")
+    return b'"finish_reason":"tool_calls"' in flat or b'"stop_reason":"tool_use"' in flat
+
+
 class StreamUsage:
     """Collect the `usage` objects of an SSE stream as the bytes pass through.
 
@@ -229,19 +235,31 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
 
         # Forced-local mode (evaluation baseline) must not fall back to the frontier.
         can_fall_back = decision.tier == "local" and cfg.route_mode != "local"
+        escalation = ""
         try:
             upstream = await send(url, out_body, hdrs)
-            local_failed = can_fall_back and upstream.status_code >= 500
-            if local_failed:
+            if can_fall_back and upstream.status_code >= 500:
+                escalation = "local_failed"
                 await upstream.aclose()
+            elif can_fall_back and cfg.escalate_on_stop and upstream.status_code == 200:
+                # Buffer the local reply; replay it only if it continues the agent loop.
+                raw = await upstream.aread()
+                await upstream.aclose()
+                if _has_tool_call(raw):
+                    upstream = httpx.Response(
+                        200, headers=upstream.headers, stream=httpx.ByteStream(raw)
+                    )
+                else:
+                    escalation = "local_stopped"
+                    record["local_output_chars"] = len(raw)
         except httpx.TransportError:
             if not can_fall_back:
                 raise
-            local_failed = True
-        if local_failed:
-            # The local server is down or broken: the agent should not notice.
+            escalation = "local_failed"
+        if escalation:
+            # The local server is down, or its reply would end the agent's turn.
             decision.tier = "frontier"
-            record["reason"] = decision.reason = decision.reason + "; local_failed"
+            record["reason"] = decision.reason = f"{decision.reason}; {escalation}"
             url, out_body, hdrs = _outbound(cfg, body, in_headers, "frontier", provider)
             record.update(tier="frontier", model=out_body["model"])
             route_headers.update(

@@ -68,6 +68,10 @@ class RouterConfig:
     # `random`, `local` and `frontier` are evaluation baselines.
     route_mode: str = "judge"
     random_local_share: float = 0.5
+    # A local reply without a tool call ends the agent's turn. Such replies are discarded and
+    # the request goes to the frontier tier: the local model takes tool steps, the frontier
+    # model decides when the task is done. Local responses are buffered to check this.
+    escalate_on_stop: bool = True
 
     turn_log_path: str = ""
     debug: bool = False
@@ -112,6 +116,7 @@ class RouterConfig:
             stay_requests=_env_int("THETARELAY_STAY_REQUESTS", cls.stay_requests),
             route_mode=_env("THETARELAY_ROUTE_MODE", cls.route_mode),
             random_local_share=_env_float("THETARELAY_RANDOM_LOCAL_SHARE", cls.random_local_share),
+            escalate_on_stop=_env_bool("THETARELAY_ESCALATE_ON_STOP", cls.escalate_on_stop),
             turn_log_path=_env("THETARELAY_TURN_LOG", ""),
             debug=_env_bool("THETARELAY_DEBUG", False),
             enable_headroom_middleware=_env_bool("THETARELAY_HEADROOM_MIDDLEWARE", True),

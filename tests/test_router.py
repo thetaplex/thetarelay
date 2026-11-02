@@ -70,7 +70,7 @@ def _app(
         frontier_api_key="sk-frontier",
         enable_headroom_middleware=False,
         turn_log_path=str(tmp_path / "turns.jsonl"),
-        **overrides,
+        **{"escalate_on_stop": False, **overrides},
     )
     app = create_app(cfg)
     calls: list[tuple[str, dict[str, Any], dict[str, str]]] = []
@@ -281,3 +281,30 @@ async def test_route_modes_for_evaluation_baselines(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="route_mode"):
         RouterConfig(route_mode="cheap")
+
+
+@pytest.mark.asyncio
+async def test_local_reply_without_tool_call_is_escalated(tmp_path: Path) -> None:
+    app, calls = _app(tmp_path, 0.9, escalate_on_stop=True)
+    tool = b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+    text = b'data: {"choices":[{"delta":{"content":"done?"},"finish_reason":"stop"}]}\n\n'
+    replies = {"local": tool}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((str(request.url), {}, {}))
+        if "judge.test" in str(request.url):
+            return httpx.Response(
+                200, json={"answers": {"route": {"probabilities": {"easy": 0.9}}}}
+            )
+        body = replies["local"] if "local.test" in str(request.url) else b"data: frontier\n\n"
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    resp = await _post(app, {**EASY, "stream": True})
+    assert (resp.headers["x-thetarelay-tier"], resp.content) == ("local", tool)
+
+    replies["local"] = text
+    resp = await _post(app, {**EASY, "stream": True})
+    assert resp.headers["x-thetarelay-tier"] == "frontier"
+    assert resp.headers["x-thetarelay-reason"] == "judge; local_stopped"
+    assert resp.content == b"data: frontier\n\n"

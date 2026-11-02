@@ -38,10 +38,12 @@ ARMS: dict[str, dict[str, str]] = {
     "random": {"THETARELAY_ROUTE_MODE": "random"},  # share set from the judge arm, see run()
     "local": {"THETARELAY_ROUTE_MODE": "local"},
 }
+# Aider's polyglot benchmark wording, plus where the instructions and tests are.
 PROMPT = (
-    "Solve the exercise in this directory. The instructions are in .docs/. "
-    "Edit only {solution}; do not change the tests or the function signatures. "
-    "You can run the tests with: python -m pytest -q"
+    "Use the instructions in .docs/ to modify {solution}. Keep and implement the existing "
+    "function stubs. Use only standard libraries; do not suggest installing any packages. "
+    "Don't change the names of existing functions or classes, as they may be referenced from "
+    "other code like unit tests. You can run the tests with: python -m pytest -q"
 )
 
 
@@ -105,6 +107,8 @@ def attempt(ex: Path, agent_dir: Path, timeout: int) -> dict[str, Any]:
                     "pi",
                     "-p",
                     "--no-session",
+                    "--no-skills",  # user-global skills would leak into every arm
+                    "--no-extensions",
                     "--model",
                     "thetarelay/auto",
                     PROMPT.format(solution=", ".join(solution)),
