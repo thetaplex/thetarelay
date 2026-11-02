@@ -6,30 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+ThetaRelay is now a routing proxy. Speculative drafting is removed.
+
 ### Added
 
-- `THETARELAY_TURN_LOG`: the proxy appends one JSON line per turn (draft, mode, accept decision, timings) for quality review.
-- `docs/reference/tested-models.md`: the frontier and local models that were tested, and which are confirmed.
-- Documentation in `docs/`: tutorial, how-to guides, reference and explanation pages (Diátaxis, ASD-STE100).
-
-### Changed
-
-- Renamed the project from ThetaCode to ThetaRelay: package `thetarelay`, CLI `thetarelay`, environment variables `THETARELAY_*`, stats endpoint `/thetarelay/stats`, Headroom entry point `thetarelay`.
-- The start of the local draft context now moves in steps of half the message limit and half the character budget, not one message per turn. The drafting instructions (`THETARELAY_LOCAL_CONCISE_DRAFT`) are now a separate system message, not an addition to the last user message. Consecutive drafts share a prefix, so the local server can reuse its prompt cache. In a 10-turn replay on Ollama with `gemma4:e4b-mlx`, the mean draft time decreased from 4.2 s to 2.4 s.
-- Python 3.13 or later is now required (was 3.11).
-- Changed the default of `THETARELAY_LOCAL_MODEL` to `gemma4:e4b`, the cross-platform build of the drafter used for the published results.
-- Changed the default of `THETARELAY_LOCAL_TIMEOUT` from `8.0` to `5.0` seconds.
-- The proxy and the Headroom extension size the local context for each conversation (`THETARELAY_LOCAL_ADAPTIVE_CONTEXT`, default `true`). The window grows while the new text can be read within the timeout, and restarts from the newest messages when it cannot. `THETARELAY_LOCAL_MAX_CONTEXT_CHARS` is now an upper limit, with the default changed from `24000` to `64000`. In a 12-turn replay on Ollama with `gemma4:e4b-mlx`, the total draft time decreased from 31.6 s (fixed 8000-character window) to 19.7 s, with no timeouts.
-
-### Fixed
-
-- `eval --benchmark humaneval` stopped with an error when a local draft exceeded `THETARELAY_LOCAL_TIMEOUT`. A slow draft now counts as no draft, as in the proxy.
-- `eval --benchmark humaneval` sent the local drafting instructions ("output only a code block") to the frontier baseline. The baseline now gets the original request, so the measured savings are not understated.
-- README: the agent-trace results for `claude-opus-4.5` now match the raw data in `benchmarks/results/live_benchmark_results_2026_10_30.json`.
+- Routing: a local judge (`tev1` on Ollama, or Jev on OpenRouter) sends each request to the local tier (`gemma4:e4b`) or the frontier tier (`openai/gpt-6.1-terra` on OpenRouter).
+- A failed tool result keeps the conversation on the frontier tier for `THETARELAY_STAY_REQUESTS` requests.
+- Requests go to the frontier tier when they are too large for the local model, when the judge fails, or when the local server fails.
+- `thetarelay proxy --debug` and `THETARELAY_DEBUG`: one line for each routing decision.
+- `THETARELAY_TURN_LOG`: one JSON line for each request, with the decision, the judge summary, usage and OpenRouter cost.
+- `x-thetarelay-tier`, `x-thetarelay-model`, `x-thetarelay-reason` and `x-thetarelay-p-easy` response headers.
+- `thetarelay judge`: ask the judge about one step.
+- `scripts/judge_eval/`: compare judges on labelled steps.
 
 ### Removed
 
-- Moved the paper, the blog post and the output-quality evaluation plan to the `research` branch.
+- Speculative drafting: the `accept_swap`, `prediction` and `context_only` strategies, draft injection and `<ACCEPT/>` stream interception. An accepted draft is the local model's answer, not the frontier model's, so it could not be trusted as a quality-preserving method.
+- `thetarelay bench` and `thetarelay eval`, the HumanEval harness and the simulated savings metrics.
+- The Headroom proxy extension (`headroom proxy --proxy-extension thetarelay`). The embedded Headroom middleware stays.
+- Drafting configuration (`THETARELAY_STRATEGY`, `THETARELAY_ACCEPT_TOKEN`, `THETARELAY_LOCAL_TIMEOUT`, `THETARELAY_LOCAL_MAX_TOKENS`, adaptive context settings, price estimates, `THETARELAY_SKIP_MODELS`, `THETARELAY_USECASE`).
 
 ## [0.1.0] - 2026-10-30
 

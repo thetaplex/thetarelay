@@ -1,126 +1,123 @@
-"""Standalone FastAPI Speculative Proxy Server (with optional embedded Headroom middleware)."""
+"""FastAPI routing proxy: each request goes to the local or the frontier tier, unchanged."""
 
 from __future__ import annotations
 
 import contextlib
-import hashlib
+import copy
 import json
 import logging
+import sys
 import time
-from collections.abc import AsyncIterator, Callable
+from collections import Counter
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
-from .config import SpeculativeConfig
-from .engine import (
-    AdaptiveDraftWindow,
-    DraftResult,
-    SpeculativeMetrics,
-    build_anthropic_response_from_draft,
-    build_openai_response_from_draft,
-    call_local_drafter,
-    extract_text_from_content,
-    inject_draft_into_body,
-    response_accepted_draft,
-)
-from .streaming import intercept_anthropic_sse_stream, intercept_openai_sse_stream
+from . import __version__
+from .config import RouterConfig
+from .router import Decision, conversation_key, decide, events
 
 logger = logging.getLogger("thetarelay.proxy")
 
-_HOP_BY_HOP_HEADERS = frozenset(
-    {
-        "host",
-        "content-length",
-        "transfer-encoding",
-        "connection",
-        "keep-alive",
-        "accept-encoding",
-        "content-encoding",
-    }
+_DROP_REQUEST_HEADERS = frozenset(
+    {"host", "content-length", "transfer-encoding", "connection", "keep-alive", "accept-encoding"}
 )
+_DROP_RESPONSE_HEADERS = frozenset(
+    {"content-length", "transfer-encoding", "content-encoding", "connection"}
+)
+_CREDENTIAL_HEADERS = frozenset({"authorization", "x-api-key"})
+_PATHS = {"anthropic": "/v1/messages", "openai": "/v1/chat/completions"}
 
 
-def _clean_outbound_headers(headers: Any) -> dict[str, str]:
-    return {
-        k: v
-        for k, v in headers.items()
-        if k.lower() not in _HOP_BY_HOP_HEADERS and not k.lower().startswith("x-thetarelay-")
-    }
+def _outbound(
+    cfg: RouterConfig, body: dict[str, Any], headers: dict[str, str], tier: str, provider: str
+) -> tuple[str, dict[str, Any], dict[str, str]]:
+    """Build the upstream URL, body and headers for the chosen tier.
 
-
-def _clean_inbound_response_headers(headers: Any) -> dict[str, str]:
-    return {
-        k: v
-        for k, v in headers.items()
-        if k.lower()
-        not in {"content-length", "transfer-encoding", "content-encoding", "connection"}
-    }
-
-
-TurnLogger = Callable[..., None]
-
-
-def _turn_logger(
-    cfg: SpeculativeConfig, body: dict[str, Any], provider: str, draft: DraftResult, mode: str
-) -> TurnLogger:
-    """Return `log(accepted, frontier_ms=None)`, which appends one turn to `cfg.turn_log_path`.
-
-    `accepted` is None when no `<ACCEPT/>` decision was made (no draft, `prediction`,
-    `context_only`, upstream error). Request headers and API keys are never written.
+    The body changes only in `model` (and, for the local tier, turning thinking off), so the
+    frontier provider sees the same prefix on every request and its prompt cache keeps working.
     """
-    if not cfg.turn_log_path:
-        return lambda *_args, **_kwargs: None
-    messages = body.get("messages") or []
-    first_user: dict[str, Any] = next((m for m in messages if m.get("role") == "user"), {})
-    conversation = hashlib.sha256(
-        extract_text_from_content(first_user.get("content", "")).encode()
-    ).hexdigest()[:12]
-    last_message = extract_text_from_content(messages[-1].get("content", "")) if messages else ""
+    out = copy.copy(body)
+    hdrs = {k: v for k, v in headers.items() if k.lower() not in _DROP_REQUEST_HEADERS}
+    if tier == "local":
+        out["model"] = cfg.local_model
+        if cfg.local_disable_thinking:
+            if provider == "anthropic":
+                out["thinking"] = {"type": "disabled"}
+            else:
+                out["reasoning_effort"] = "none"
+        # The client's cloud credentials never go to the local server.
+        hdrs = {k: v for k, v in hdrs.items() if k.lower() not in _CREDENTIAL_HEADERS}
+        return cfg.local_base_url + _PATHS[provider], out, hdrs
+    out["model"] = cfg.frontier_model
+    if cfg.frontier_api_key:
+        hdrs = {k: v for k, v in hdrs.items() if k.lower() not in _CREDENTIAL_HEADERS}
+        hdrs["authorization"] = f"Bearer {cfg.frontier_api_key}"
+    return cfg.frontier_base_url + _PATHS[provider], out, hdrs
 
-    def log(accepted: bool | None, frontier_ms: float | None = None) -> None:
-        record = {
-            "ts": datetime.now(UTC).isoformat(timespec="milliseconds"),
-            "provider": provider,
-            "model": body.get("model"),
-            "conversation": conversation,
-            "turn": len(messages),
-            "stream": bool(body.get("stream", False)),
-            "mode": mode,
-            "drafted": draft.has_draft,
-            "skip_reason": draft.skip_reason or None,
-            "draft_error": draft.error or None,
-            "draft_ms": round(draft.latency_ms, 1),
-            "frontier_ms": round(frontier_ms, 1) if frontier_ms is not None else None,
-            "accepted": accepted,
-            "draft_text": draft.text,
-            "draft_tool_calls": draft.tool_calls,
-            "last_message": last_message,
+
+def _usage(provider: str, data: dict[str, Any]) -> dict[str, Any]:
+    u = data.get("usage") or {}
+    if provider == "anthropic":
+        return {
+            "input_tokens": u.get("input_tokens"),
+            "cached_tokens": u.get("cache_read_input_tokens"),
+            "output_tokens": u.get("output_tokens"),
+            "cost_usd": u.get("cost"),
         }
+    details = u.get("prompt_tokens_details") or {}
+    return {
+        "input_tokens": u.get("prompt_tokens"),
+        "cached_tokens": details.get("cached_tokens") if isinstance(details, dict) else None,
+        "output_tokens": u.get("completion_tokens"),
+        "cost_usd": u.get("cost"),
+    }
+
+
+class TurnRecorder:
+    """Writes the turn log, the debug line and the per-tier counters."""
+
+    def __init__(self, cfg: RouterConfig) -> None:
+        self.cfg = cfg
+        self.counts: Counter[str] = Counter()
+
+    def record(self, record: dict[str, Any]) -> None:
+        self.counts[f"{record['tier']}_requests"] += 1
+        if record.get("status", 200) >= 400:
+            self.counts[f"{record['tier']}_errors"] += 1
+        if self.cfg.debug:
+            p = record["p_easy"]
+            judge = f"P(easy)={p:.2f}" if p is not None else "no judge"
+            print(
+                f"[thetarelay] conv {record['conversation']} msg {record['messages']}  "
+                f"{judge}  {record['reason']} → {record['tier']} ({record['model']})  "
+                f"status {record['status']}  {record['upstream_ms']:.0f} ms",
+                file=sys.stderr,
+            )
+        if not self.cfg.turn_log_path:
+            return
         try:
-            # ponytail: blocking append per turn; fine for eval runs, move to a queue if hot.
-            with Path(cfg.turn_log_path).open("a", encoding="utf-8") as fh:
+            # ponytail: blocking append per request; fine for one developer, queue it if hot.
+            with Path(self.cfg.turn_log_path).open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
         except OSError as exc:
             logger.warning("Could not write turn log: %s", exc)
 
-    return log
 
-
-def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
-    """Create the ThetaRelay FastAPI proxy application."""
-    cfg = config or SpeculativeConfig.from_env()
-    metrics = SpeculativeMetrics()
-    window = AdaptiveDraftWindow()
+def create_app(config: RouterConfig | None = None) -> FastAPI:
+    """Create the ThetaRelay routing proxy application."""
+    cfg = config or RouterConfig.from_env()
+    recorder = TurnRecorder(cfg)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(120.0, connect=10.0),
+            timeout=httpx.Timeout(300.0, connect=10.0),
             limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
         )
         try:
@@ -128,396 +125,149 @@ def create_app(config: SpeculativeConfig | None = None) -> FastAPI:
         finally:
             await app.state.http_client.aclose()
 
-    app = FastAPI(
-        title="ThetaRelay Speculative Proxy",
-        description="Local-to-Frontier Speculative Drafting Proxy",
-        version="0.1.0",
-        lifespan=lifespan,
-    )
+    app = FastAPI(title="ThetaRelay", version=__version__, lifespan=lifespan)
     app.state.config = cfg
-    app.state.metrics = metrics
-
-    # Embed Headroom's CompressionMiddleware if installed and enabled
+    app.state.recorder = recorder
+    app.state.headroom_middleware_active = False
     if cfg.enable_headroom_middleware:
         try:
             from headroom.integrations.asgi import CompressionMiddleware
 
             app.add_middleware(CompressionMiddleware)
             app.state.headroom_middleware_active = True
-            logger.info("Embedded Headroom CompressionMiddleware enabled.")
         except ImportError:
-            app.state.headroom_middleware_active = False
-            logger.info(
-                "headroom-ai not found in environment; running without in-process compression."
-            )
-    else:
-        app.state.headroom_middleware_active = False
+            logger.info("headroom-ai not installed; running without compression.")
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return {
-            "service": "thetarelay-proxy",
-            "status": "healthy",
-            "headroom_middleware_active": getattr(app.state, "headroom_middleware_active", False),
-            "local_model": cfg.local_model,
-            "local_base_url": cfg.local_base_url,
-            "strategy": cfg.strategy,
-        }
+        return {"service": "thetarelay", "status": "healthy"}
 
     @app.get("/stats")
     @app.get("/thetarelay/stats")
     async def stats() -> dict[str, Any]:
         return {
-            "service": "thetarelay-proxy",
-            "headroom_middleware_active": getattr(app.state, "headroom_middleware_active", False),
+            "service": "thetarelay",
+            "headroom_middleware_active": app.state.headroom_middleware_active,
             "config": {
-                "local_base_url": cfg.local_base_url,
                 "local_model": cfg.local_model,
-                "strategy": cfg.strategy,
-                "accept_token": cfg.accept_token,
-                "anthropic_upstream_url": cfg.anthropic_upstream_url,
-                "openai_upstream_url": cfg.openai_upstream_url,
+                "frontier_model": cfg.frontier_model,
+                "judge_model": cfg.judge_model,
+                "easy_threshold": cfg.easy_threshold,
+                "stay_requests": cfg.stay_requests,
             },
-            "metrics": metrics.to_dict(),
+            "counts": dict(recorder.counts),
         }
+
+    async def route(request: Request, provider: str) -> Response:
+        client: httpx.AsyncClient = request.app.state.http_client
+        body = await request.json()
+        decision: Decision = await decide(cfg, client, body, provider)
+        in_headers = dict(request.headers.items())
+        url, out_body, hdrs = _outbound(cfg, body, in_headers, decision.tier, provider)
+        evs = events(body, provider)
+        record: dict[str, Any] = {
+            "ts": datetime.now(UTC).isoformat(timespec="milliseconds"),
+            "provider": provider,
+            "conversation": conversation_key(evs),
+            "messages": len(body.get("messages") or []),
+            "stream": bool(body.get("stream")),
+            "client_model": body.get("model"),
+            "tier": decision.tier,
+            "model": out_body["model"],
+            "reason": decision.reason,
+            "p_easy": decision.p_easy,
+            "threshold": cfg.easy_threshold,
+            "judge_ms": decision.judge_ms,
+            "judge_error": decision.judge_error,
+            "judge_state": decision.judge_state,
+        }
+        route_headers = {
+            "x-thetarelay-tier": decision.tier,
+            "x-thetarelay-model": out_body["model"],
+            "x-thetarelay-reason": decision.reason,
+        }
+        if decision.p_easy is not None:
+            route_headers["x-thetarelay-p-easy"] = f"{decision.p_easy:.3f}"
+        query = f"?{request.url.query}" if request.url.query else ""
+        started = time.perf_counter()
+
+        async def send(url: str, out_body: dict[str, Any], hdrs: dict[str, str]) -> httpx.Response:
+            req = client.build_request(
+                "POST", url + query, content=json.dumps(out_body).encode(), headers=hdrs
+            )
+            return await client.send(req, stream=record["stream"])
+
+        try:
+            upstream = await send(url, out_body, hdrs)
+            local_failed = decision.tier == "local" and upstream.status_code >= 500
+            if local_failed:
+                await upstream.aclose()
+        except httpx.TransportError:
+            if decision.tier != "local":
+                raise
+            local_failed = True
+        if local_failed:
+            # The local server is down or broken: the agent should not notice.
+            decision.tier = "frontier"
+            record["reason"] = decision.reason = decision.reason + "; local_failed"
+            url, out_body, hdrs = _outbound(cfg, body, in_headers, "frontier", provider)
+            record.update(tier="frontier", model=out_body["model"])
+            route_headers.update(
+                {
+                    "x-thetarelay-tier": "frontier",
+                    "x-thetarelay-model": out_body["model"],
+                    "x-thetarelay-reason": decision.reason,
+                }
+            )
+            upstream = await send(url, out_body, hdrs)
+
+        if record["stream"]:
+
+            async def relay() -> AsyncIterator[bytes]:
+                try:
+                    async for chunk in upstream.aiter_bytes():
+                        yield chunk
+                finally:
+                    await upstream.aclose()
+                    record["status"] = upstream.status_code
+                    record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
+                    recorder.record(record)
+
+            resp_headers = {
+                k: v for k, v in upstream.headers.items() if k.lower() not in _DROP_RESPONSE_HEADERS
+            }
+            return StreamingResponse(
+                relay(),
+                status_code=upstream.status_code,
+                media_type=upstream.headers.get("content-type", "text/event-stream"),
+                headers={**resp_headers, **route_headers},
+            )
+
+        resp = upstream
+        await resp.aread()
+        record["status"] = resp.status_code
+        record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
+        if resp.status_code == 200:
+            with contextlib.suppress(ValueError):
+                record.update(_usage(provider, resp.json()))
+        recorder.record(record)
+        resp_headers = {
+            k: v for k, v in resp.headers.items() if k.lower() not in _DROP_RESPONSE_HEADERS
+        }
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            media_type=resp.headers.get("content-type", "application/json"),
+            headers={**resp_headers, **route_headers},
+        )
 
     @app.post("/v1/messages")
     async def anthropic_messages(request: Request) -> Response:
-        """Handle Anthropic Messages API requests with local speculative drafting."""
-        client: httpx.AsyncClient = request.app.state.http_client
-        body = await request.json()
-        stream = bool(body.get("stream", False))
-        inbound_headers = dict(request.headers.items())
-
-        metrics.requests_total += 1
-        metrics.drafts_attempted += 1
-
-        draft: DraftResult = await call_local_drafter(
-            body,
-            provider="anthropic",
-            config=cfg,
-            http_client=client,
-            headers=inbound_headers,
-            window=window,
-        )
-
-        active_mode = "none"
-        if draft.skipped:
-            metrics.drafts_skipped += 1
-            outbound_body = body
-        elif draft.error or not draft.has_draft:
-            metrics.drafts_failed += 1
-            outbound_body = body
-        else:
-            metrics.drafts_succeeded += 1
-            metrics.local_draft_latency_ms_sum += draft.latency_ms
-            metrics.local_draft_latencies_ms.append(draft.latency_ms)
-            outbound_body, active_mode = inject_draft_into_body(
-                body, provider="anthropic", draft=draft, config=cfg
-            )
-
-        base_anth = cfg.anthropic_upstream_url.rstrip("/")
-        upstream_url = (
-            f"{base_anth}/messages" if base_anth.endswith("/v1") else f"{base_anth}/v1/messages"
-        )
-        if request.url.query:
-            upstream_url = f"{upstream_url}?{request.url.query}"
-        outbound_headers = _clean_outbound_headers(request.headers)
-        outbound_headers["content-type"] = "application/json"
-
-        spec_headers = {
-            "x-thetarelay-drafted": "true" if draft.has_draft else "false",
-            "x-thetarelay-mode": active_mode,
-            "x-thetarelay-draft-ms": f"{draft.latency_ms:.1f}",
-        }
-        log_turn = _turn_logger(cfg, body, "anthropic", draft, active_mode)
-
-        if stream:
-            req = client.build_request(
-                "POST",
-                upstream_url,
-                content=json.dumps(outbound_body).encode("utf-8"),
-                headers=outbound_headers,
-            )
-            upstream_resp = await client.send(req, stream=True)
-            resp_headers = {
-                **_clean_inbound_response_headers(upstream_resp.headers),
-                **spec_headers,
-            }
-
-            if (
-                upstream_resp.status_code != 200
-                or not draft.has_draft
-                or active_mode != "accept_swap"
-            ):
-
-                async def raw_stream() -> AsyncIterator[bytes]:
-                    try:
-                        async for chunk in upstream_resp.aiter_bytes():
-                            yield chunk
-                    finally:
-                        await upstream_resp.aclose()
-                        log_turn(None)
-
-                return StreamingResponse(
-                    raw_stream(),
-                    status_code=upstream_resp.status_code,
-                    media_type="text/event-stream",
-                    headers=resp_headers,
-                )
-
-            stream_accepted = False
-
-            def on_accepted(_saved_tokens: int, _saved_usd: float) -> None:
-                nonlocal stream_accepted
-                stream_accepted = True
-
-            async def intercepted_stream() -> AsyncIterator[bytes]:
-                try:
-                    async for chunk in intercept_anthropic_sse_stream(
-                        upstream_resp.aiter_bytes(),
-                        draft=draft,
-                        config=cfg,
-                        metrics=metrics,
-                        on_accepted_callback=on_accepted,
-                    ):
-                        yield chunk
-                finally:
-                    await upstream_resp.aclose()
-                    log_turn(stream_accepted)
-
-            return StreamingResponse(
-                intercepted_stream(),
-                status_code=200,
-                media_type="text/event-stream",
-                headers=resp_headers,
-            )
-
-        # Non-streaming path
-        frontier_started = time.perf_counter()
-        upstream_resp = await client.post(
-            upstream_url,
-            content=json.dumps(outbound_body).encode("utf-8"),
-            headers=outbound_headers,
-        )
-        frontier_ms = (time.perf_counter() - frontier_started) * 1000.0
-        resp_headers = {
-            **_clean_inbound_response_headers(upstream_resp.headers),
-            **spec_headers,
-        }
-
-        if upstream_resp.status_code == 200 and draft.has_draft and active_mode == "accept_swap":
-            try:
-                resp_json = upstream_resp.json()
-                resp_text = extract_text_from_content(resp_json.get("content", []))
-                if response_accepted_draft(resp_text, cfg):
-                    saved_tok, _, _ = metrics.record_turn_outcome(
-                        draft=draft,
-                        config=cfg,
-                        accepted=True,
-                        active_mode=active_mode,
-                        frontier_latency_ms=frontier_ms,
-                    )
-                    resp_headers["x-thetarelay-accepted"] = "true"
-                    resp_headers["x-thetarelay-tokens-saved"] = str(saved_tok)
-                    swapped = build_anthropic_response_from_draft(resp_json, draft)
-                    log_turn(True, frontier_ms)
-                    return JSONResponse(status_code=200, content=swapped, headers=resp_headers)
-                else:
-                    metrics.record_turn_outcome(
-                        draft=draft,
-                        config=cfg,
-                        accepted=False,
-                        active_mode=active_mode,
-                        frontier_latency_ms=frontier_ms,
-                    )
-                    resp_headers["x-thetarelay-accepted"] = "false"
-            except Exception as exc:
-                logger.warning("Failed to inspect non-streaming Anthropic response: %s", exc)
-
-        rejected = resp_headers.get("x-thetarelay-accepted") == "false"
-        log_turn(False if rejected else None, frontier_ms)
-        return Response(
-            content=upstream_resp.content,
-            status_code=upstream_resp.status_code,
-            headers=resp_headers,
-            media_type=upstream_resp.headers.get("content-type", "application/json"),
-        )
+        return await route(request, "anthropic")
 
     @app.post("/v1/chat/completions")
     @app.post("/chat/completions")
-    async def openai_chat_completions(request: Request) -> Response:
-        """Handle OpenAI Chat Completions requests with local speculative drafting
-        (supports both OpenAI `prediction` / Predicted Outputs and `<ACCEPT/>` verification).
-        """
-        client: httpx.AsyncClient = request.app.state.http_client
-        body = await request.json()
-        stream = bool(body.get("stream", False))
-        model = str(body.get("model", "gpt-4o"))
-        inbound_headers = dict(request.headers.items())
-
-        metrics.requests_total += 1
-        metrics.drafts_attempted += 1
-
-        draft: DraftResult = await call_local_drafter(
-            body,
-            provider="openai",
-            config=cfg,
-            http_client=client,
-            headers=inbound_headers,
-            window=window,
-        )
-
-        active_mode = "none"
-        if draft.skipped:
-            metrics.drafts_skipped += 1
-            outbound_body = body
-        elif draft.error or not draft.has_draft:
-            metrics.drafts_failed += 1
-            outbound_body = body
-        else:
-            metrics.drafts_succeeded += 1
-            metrics.local_draft_latency_ms_sum += draft.latency_ms
-            metrics.local_draft_latencies_ms.append(draft.latency_ms)
-            outbound_body, active_mode = inject_draft_into_body(
-                body, provider="openai", draft=draft, config=cfg
-            )
-            if active_mode == "openai_prediction":
-                metrics.openai_prediction_injected_count += 1
-                metrics.prefix_cache_preserved_count += 1
-
-        base_oai = cfg.openai_upstream_url.rstrip("/")
-        upstream_url = (
-            f"{base_oai}/chat/completions"
-            if base_oai.endswith("/v1")
-            else f"{base_oai}/v1/chat/completions"
-        )
-        if request.url.query:
-            upstream_url = f"{upstream_url}?{request.url.query}"
-        outbound_headers = _clean_outbound_headers(request.headers)
-        outbound_headers["content-type"] = "application/json"
-
-        spec_headers = {
-            "x-thetarelay-drafted": "true" if draft.has_draft else "false",
-            "x-thetarelay-mode": active_mode,
-            "x-thetarelay-draft-ms": f"{draft.latency_ms:.1f}",
-        }
-        log_turn = _turn_logger(cfg, body, "openai", draft, active_mode)
-
-        if stream:
-            req = client.build_request(
-                "POST",
-                upstream_url,
-                content=json.dumps(outbound_body).encode("utf-8"),
-                headers=outbound_headers,
-            )
-            upstream_resp = await client.send(req, stream=True)
-            resp_headers = {
-                **_clean_inbound_response_headers(upstream_resp.headers),
-                **spec_headers,
-            }
-
-            if (
-                upstream_resp.status_code != 200
-                or not draft.has_draft
-                or active_mode != "accept_swap"
-            ):
-
-                async def raw_stream() -> AsyncIterator[bytes]:
-                    try:
-                        async for chunk in upstream_resp.aiter_bytes():
-                            yield chunk
-                    finally:
-                        await upstream_resp.aclose()
-                        log_turn(None)
-
-                return StreamingResponse(
-                    raw_stream(),
-                    status_code=upstream_resp.status_code,
-                    media_type="text/event-stream",
-                    headers=resp_headers,
-                )
-
-            stream_accepted = False
-
-            def on_accepted(_saved_tokens: int, _saved_usd: float) -> None:
-                nonlocal stream_accepted
-                stream_accepted = True
-
-            async def intercepted_stream() -> AsyncIterator[bytes]:
-                try:
-                    async for chunk in intercept_openai_sse_stream(
-                        upstream_resp.aiter_bytes(),
-                        draft=draft,
-                        config=cfg,
-                        metrics=metrics,
-                        model=model,
-                        on_accepted_callback=on_accepted,
-                    ):
-                        yield chunk
-                finally:
-                    await upstream_resp.aclose()
-                    log_turn(stream_accepted)
-
-            return StreamingResponse(
-                intercepted_stream(),
-                status_code=200,
-                media_type="text/event-stream",
-                headers=resp_headers,
-            )
-
-        # Non-streaming path
-        frontier_started = time.perf_counter()
-        upstream_resp = await client.post(
-            upstream_url,
-            content=json.dumps(outbound_body).encode("utf-8"),
-            headers=outbound_headers,
-        )
-        frontier_ms = (time.perf_counter() - frontier_started) * 1000.0
-        resp_headers = {
-            **_clean_inbound_response_headers(upstream_resp.headers),
-            **spec_headers,
-        }
-
-        if upstream_resp.status_code == 200 and draft.has_draft and active_mode == "accept_swap":
-            try:
-                resp_json = upstream_resp.json()
-                choices = resp_json.get("choices") or []
-                if choices:
-                    msg = (choices[0] or {}).get("message") or {}
-                    resp_text = str(msg.get("content") or "")
-                    if response_accepted_draft(resp_text, cfg):
-                        saved_tok, _, _ = metrics.record_turn_outcome(
-                            draft=draft,
-                            config=cfg,
-                            accepted=True,
-                            active_mode=active_mode,
-                            frontier_latency_ms=frontier_ms,
-                        )
-                        resp_headers["x-thetarelay-accepted"] = "true"
-                        resp_headers["x-thetarelay-tokens-saved"] = str(saved_tok)
-                        swapped = build_openai_response_from_draft(resp_json, draft)
-                        log_turn(True, frontier_ms)
-                        return JSONResponse(status_code=200, content=swapped, headers=resp_headers)
-                    else:
-                        metrics.record_turn_outcome(
-                            draft=draft,
-                            config=cfg,
-                            accepted=False,
-                            active_mode=active_mode,
-                            frontier_latency_ms=frontier_ms,
-                        )
-                        resp_headers["x-thetarelay-accepted"] = "false"
-            except Exception as exc:
-                logger.warning("Failed to inspect non-streaming OpenAI response: %s", exc)
-
-        rejected = resp_headers.get("x-thetarelay-accepted") == "false"
-        log_turn(False if rejected else None, frontier_ms)
-        return Response(
-            content=upstream_resp.content,
-            status_code=upstream_resp.status_code,
-            headers=resp_headers,
-            media_type=upstream_resp.headers.get("content-type", "application/json"),
-        )
+    async def openai_chat(request: Request) -> Response:
+        return await route(request, "openai")
 
     return app

@@ -1,14 +1,14 @@
 [project]
 name = "thetarelay"
-version = "0.1.0"
-description = "Local-to-Frontier Speculative Drafting Proxy & Headroom Extension for Coding Agents (Pi, OpenCode, Cursor, Claude Code)"
+version = "0.2.0.dev0"
+description = "Routing proxy for coding agents: a local judge sends easy requests to a local model and hard ones to a frontier model"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "ThetaPlex", email = "support@thetaplex.com" }]
 requires-python = ">=3.13"
 keywords = [
-    "speculative-decoding",
+    "model-routing",
     "coding-agent",
     "headroom",
     "claude-code",
@@ -56,10 +56,6 @@ dev = [
 
 [project.scripts]
 thetarelay = "thetarelay.cli:main"
-
-# Native plugin registration for `headroom proxy --proxy-extension thetarelay`
-[project.entry-points."headroom.proxy_extension"]
-thetarelay = "thetarelay.headroom_ext:install"
 
 [build-system]
 requires = ["hatchling>=1.27"]

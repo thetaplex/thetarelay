@@ -1,3 +1,3 @@
-"""ThetaRelay: Local-to-Frontier Speculative Drafting Proxy & Headroom Extension."""
+"""ThetaRelay: route coding-agent requests to a local or a frontier model."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0.dev0"

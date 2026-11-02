@@ -1,6 +1,6 @@
 # thetarelay
 
-Open-source CLI and Headroom proxy extension (PyPI) that performs local-to-frontier speculative drafting for coding agents (Pi, OpenCode, Cursor, Claude Code). Part of the ThetaPlex organisation.
+Open-source routing proxy (PyPI) for coding agents (Pi, OpenCode, Cursor, Claude Code). A local judge model (tev1 on Ollama) sends easy requests to a local model and hard requests to a frontier model on OpenRouter. Part of the ThetaPlex organisation.
 
 ## Stack
 Python 3.13+, uv, hatchling, FastAPI, uvicorn, httpx. Optional extra: `headroom` (`headroom-ai`). Dev tools live in the `dev` dependency group. Apache-2.0.
@@ -14,4 +14,6 @@ Python 3.13+, uv, hatchling, FastAPI, uvicorn, httpx. Optional extra: `headroom`
 ## Rules
 - Tests never hit real provider APIs; mock with `httpx.MockTransport`.
 - Never print or log secrets or API keys.
-- Preserve Anthropic and OpenAI prefix caches: never mutate the system prompt or historical messages when injecting speculative drafts; append only to the final user turn.
+- Preserve Anthropic and OpenAI prefix caches: forward request bodies unchanged except `model` (and thinking off for the local tier). Never edit the system prompt, messages or tools.
+- Never send the client's cloud credentials to the local tier.
+- Uncertain routing goes to the frontier tier (judge error, recent failure, oversized request).
