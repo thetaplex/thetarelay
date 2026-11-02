@@ -39,8 +39,9 @@ def _outbound(
 ) -> tuple[str, dict[str, Any], dict[str, str]]:
     """Build the upstream URL, body and headers for the chosen tier.
 
-    The body changes only in `model` (and, for the local tier, turning thinking off), so the
-    frontier provider sees the same prefix on every request and its prompt cache keeps working.
+    Frontier requests change only in `model`, so the frontier provider sees the same prefix on
+    every request and its prompt cache keeps working. Local requests also turn thinking off, so
+    the local model answers quickly; that change never reaches the frontier provider.
     """
     out = copy.copy(body)
     hdrs = {k: v for k, v in headers.items() if k.lower() not in _DROP_REQUEST_HEADERS}
