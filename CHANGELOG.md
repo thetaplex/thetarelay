@@ -19,7 +19,14 @@ ThetaRelay is now a routing proxy. Speculative drafting is removed.
 - `thetarelay judge`: ask the judge about one step.
 - `scripts/judge_eval/`: compare judges on labelled steps.
 
+### Changed
+
+- Renamed the project from ThetaCode to ThetaRelay: package `thetarelay`, CLI `thetarelay`, environment variables `THETARELAY_*`, stats endpoint `/thetarelay/stats`.
+- Python 3.13 or later is now required (was 3.11).
+
 ### Removed
+
+- Moved the paper, the blog post and the output-quality evaluation plan to the `research` branch.
 
 - Speculative drafting: the `accept_swap`, `prediction` and `context_only` strategies, draft injection and `<ACCEPT/>` stream interception. An accepted draft is the local model's answer, not the frontier model's, so it could not be trusted as a quality-preserving method.
 - `thetarelay bench` and `thetarelay eval`, the HumanEval harness and the simulated savings metrics.
