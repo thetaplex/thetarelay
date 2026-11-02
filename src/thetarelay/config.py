@@ -63,6 +63,11 @@ class RouterConfig:
     easy_threshold: float = 0.7
     # After a failed tool result, keep this many requests of the conversation on the frontier.
     stay_requests: int = 6
+    # `judge` (default); `random`: the same rules, but a coin with P(local) = random_local_share
+    # replaces the judge; `local` / `frontier`: every request to one tier, no fallback.
+    # `random`, `local` and `frontier` are evaluation baselines.
+    route_mode: str = "judge"
+    random_local_share: float = 0.5
 
     turn_log_path: str = ""
     debug: bool = False
@@ -71,6 +76,14 @@ class RouterConfig:
     def __post_init__(self) -> None:
         if not 0.0 <= self.easy_threshold <= 1.0:
             raise ValueError(f"easy_threshold must be between 0 and 1, got {self.easy_threshold}")
+        if self.route_mode not in ("judge", "random", "local", "frontier"):
+            raise ValueError(
+                f"route_mode must be judge, random, local or frontier, got {self.route_mode!r}"
+            )
+        if not 0.0 <= self.random_local_share <= 1.0:
+            raise ValueError(
+                f"random_local_share must be between 0 and 1, got {self.random_local_share}"
+            )
 
     @classmethod
     def from_env(cls) -> RouterConfig:
@@ -97,6 +110,8 @@ class RouterConfig:
             judge_timeout_seconds=_env_float("THETARELAY_JUDGE_TIMEOUT", cls.judge_timeout_seconds),
             easy_threshold=_env_float("THETARELAY_EASY_THRESHOLD", cls.easy_threshold),
             stay_requests=_env_int("THETARELAY_STAY_REQUESTS", cls.stay_requests),
+            route_mode=_env("THETARELAY_ROUTE_MODE", cls.route_mode),
+            random_local_share=_env_float("THETARELAY_RANDOM_LOCAL_SHARE", cls.random_local_share),
             turn_log_path=_env("THETARELAY_TURN_LOG", ""),
             debug=_env_bool("THETARELAY_DEBUG", False),
             enable_headroom_middleware=_env_bool("THETARELAY_HEADROOM_MIDDLEWARE", True),

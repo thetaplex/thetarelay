@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import re
 import time
 from dataclasses import dataclass, field
@@ -184,11 +185,16 @@ async def decide(
 ) -> Decision:
     evs = events(body, provider)
     state = summarize(evs)
+    if cfg.route_mode in ("local", "frontier"):
+        return Decision(cfg.route_mode, f"forced_{cfg.route_mode}", state)  # type: ignore[arg-type]
     if request_chars(body) > cfg.local_max_request_chars:
         return Decision("frontier", "too_large_for_local", state)
     since = requests_since_failure(evs)
     if since is not None and since < cfg.stay_requests:
         return Decision("frontier", f"recent_failure ({since} requests ago)", state)
+    if cfg.route_mode == "random":
+        coin: Tier = "local" if random.random() < cfg.random_local_share else "frontier"  # noqa: S311
+        return Decision(coin, "random", state)
     started = time.perf_counter()
     try:
         p_easy = await ask_judge(cfg, client, state)

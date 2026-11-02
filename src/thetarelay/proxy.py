@@ -80,6 +80,35 @@ def _usage(provider: str, data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+class StreamUsage:
+    """Collect the `usage` objects of an SSE stream as the bytes pass through.
+
+    OpenAI sends usage in the last chunk; Anthropic sends it in `message_start` (input) and
+    `message_delta` (output). Later non-null values win.
+    """
+
+    def __init__(self) -> None:
+        self.usage: dict[str, Any] = {}
+        self._partial = b""
+
+    def feed(self, chunk: bytes) -> None:
+        lines = (self._partial + chunk).split(b"\n")
+        self._partial = lines.pop()
+        for line in lines:
+            if not line.startswith(b"data:") or b'"usage"' not in line:
+                continue
+            try:
+                obj = json.loads(line[5:])
+            except ValueError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            message = obj.get("message")
+            u = obj.get("usage") or (message.get("usage") if isinstance(message, dict) else None)
+            if isinstance(u, dict):
+                self.usage.update({k: v for k, v in u.items() if v is not None})
+
+
 class TurnRecorder:
     """Writes the turn log, the debug line and the per-tier counters."""
 
@@ -198,13 +227,15 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             )
             return await client.send(req, stream=record["stream"])
 
+        # Forced-local mode (evaluation baseline) must not fall back to the frontier.
+        can_fall_back = decision.tier == "local" and cfg.route_mode != "local"
         try:
             upstream = await send(url, out_body, hdrs)
-            local_failed = decision.tier == "local" and upstream.status_code >= 500
+            local_failed = can_fall_back and upstream.status_code >= 500
             if local_failed:
                 await upstream.aclose()
         except httpx.TransportError:
-            if decision.tier != "local":
+            if not can_fall_back:
                 raise
             local_failed = True
         if local_failed:
@@ -225,11 +256,15 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
         if record["stream"]:
 
             async def relay() -> AsyncIterator[bytes]:
+                usage = StreamUsage()
                 try:
                     async for chunk in upstream.aiter_bytes():
+                        usage.feed(chunk)
                         yield chunk
                 finally:
                     await upstream.aclose()
+                    if usage.usage:
+                        record.update(_usage(provider, {"usage": usage.usage}))
                     record["status"] = upstream.status_code
                     record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
                     recorder.record(record)

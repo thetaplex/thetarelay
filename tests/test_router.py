@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from thetarelay.config import RouterConfig
-from thetarelay.proxy import create_app
+from thetarelay.proxy import StreamUsage, create_app
 from thetarelay.router import events, requests_since_failure, summarize
 
 ANTH_FAIL = {
@@ -206,3 +206,78 @@ async def test_streaming_is_relayed_and_logged(tmp_path: Path) -> None:
     resp = await _post(app, {**EASY, "stream": True})
     assert resp.content == sse
     assert json.loads((tmp_path / "turns.jsonl").read_text())["stream"] is True
+
+
+def test_stream_usage_is_collected_across_chunk_boundaries() -> None:
+    oai = (
+        b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n'
+        b'data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,'
+        b'"prompt_tokens_details":{"cached_tokens":80},"cost":0.002}}\n\ndata: [DONE]\n\n'
+    )
+    u = StreamUsage()
+    for i in range(0, len(oai), 7):  # split lines across chunks
+        u.feed(oai[i : i + 7])
+    assert u.usage["prompt_tokens"] == 100
+    assert u.usage["cost"] == 0.002
+
+    anth = StreamUsage()
+    anth.feed(b'data: {"type":"message_start","message":{"usage":{"input_tokens":50,')
+    anth.feed(b'"cache_read_input_tokens":40,"output_tokens":1}}}\n\n')
+    anth.feed(b'data: {"type":"message_delta","usage":{"output_tokens":9}}\n\n')
+    assert anth.usage == {"input_tokens": 50, "cache_read_input_tokens": 40, "output_tokens": 9}
+
+
+@pytest.mark.asyncio
+async def test_streaming_logs_usage_and_cost(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, 0.2)
+    sse = (
+        b'event: message_start\ndata: {"type":"message_start","message":'
+        b'{"usage":{"input_tokens":50,"cache_read_input_tokens":40}}}\n\n'
+        b'event: message_delta\ndata: {"type":"message_delta",'
+        b'"usage":{"output_tokens":9,"cost":0.003}}\n\n'
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "judge.test" in str(request.url):
+            return httpx.Response(
+                200, json={"answers": {"route": {"probabilities": {"easy": 0.2}}}}
+            )
+        return httpx.Response(200, content=sse, headers={"content-type": "text/event-stream"})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await _post(app, {**EASY, "stream": True})
+    line = json.loads((tmp_path / "turns.jsonl").read_text())
+    assert (line["input_tokens"], line["cached_tokens"], line["output_tokens"]) == (50, 40, 9)
+    assert line["cost_usd"] == 0.003
+
+
+@pytest.mark.asyncio
+async def test_route_modes_for_evaluation_baselines(tmp_path: Path) -> None:
+    app, calls = _app(tmp_path, 0.99, route_mode="frontier")
+    assert (await _post(app, EASY)).headers["x-thetarelay-tier"] == "frontier"
+    assert not any("judge.test" in c[0] for c in calls)
+
+    app, calls = _app(tmp_path, 0.01, route_mode="random", random_local_share=1.0)
+    resp = await _post(app, EASY)
+    assert (resp.headers["x-thetarelay-tier"], resp.headers["x-thetarelay-reason"]) == (
+        "local",
+        "random",
+    )
+    assert not any("judge.test" in c[0] for c in calls)
+    # Random mode keeps the hard rules: a recent failure still goes to the frontier.
+    resp = await _post(app, {"model": "claude-x", "max_tokens": 10, **ANTH_FAIL})
+    assert resp.headers["x-thetarelay-tier"] == "frontier"
+
+    app, calls = _app(tmp_path, 0.01, route_mode="local")
+
+    async def down(request: httpx.Request) -> httpx.Response:
+        calls.append((str(request.url), {}, {}))
+        return httpx.Response(503)
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(down))
+    resp = await _post(app, EASY)
+    assert resp.status_code == 503  # forced local: no fallback
+    assert not any("frontier.test" in c[0] for c in calls)
+
+    with pytest.raises(ValueError, match="route_mode"):
+        RouterConfig(route_mode="cheap")
