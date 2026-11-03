@@ -41,6 +41,11 @@ _FAILURE = re.compile(
     r"\b(FAILED|FAILURES?|Traceback|AssertionError|panicked|Exception|"
     r"[Ee]rror:|exit (code|status) [1-9]\d*|non-zero exit)"
 )
+# Signs that a tool result is a passing test run (pytest, unittest, jest, cargo, go).
+_PASSED = re.compile(
+    r"\b\d+ passed\b|^OK\b|Tests?:\s+\d+ passed|test result: ok|^ok\s+\S+\s+[\d.]+s", re.M
+)
+_NOT_PASSED = re.compile(r"\b(failed|errors?)\b", re.I)
 _REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
 _STEP_LIMIT = 12
 _GOAL_CHARS = 300
@@ -64,6 +69,9 @@ class Decision:
     p_easy: float | None = None
     judge_ms: float | None = None
     judge_error: str | None = None
+    # The tool results just before this request include a passing test run, so a local reply
+    # that ends the agent's turn is a legitimate finish, not giving up.
+    tests_passed: bool = False
 
 
 def _text(content: Any) -> str:
@@ -158,6 +166,18 @@ def requests_since_failure(evs: list[Event]) -> int | None:
     return None
 
 
+def passed_tests_just_ran(evs: list[Event]) -> bool:
+    """True if the trailing tool results include a passing test run and no failure."""
+    trailing: list[Event] = []
+    for e in reversed(evs):
+        if e.kind != "result":
+            break
+        trailing.append(e)
+    if not trailing or any(e.failed or _NOT_PASSED.search(e.text) for e in trailing):
+        return False
+    return any(_PASSED.search(e.text) for e in trailing)
+
+
 def conversation_key(evs: list[Event]) -> str:
     first = next((e.text for e in evs if e.kind == "user"), "")
     return hashlib.sha256(first.encode()).hexdigest()[:12]
@@ -194,7 +214,7 @@ async def decide(
         return Decision("frontier", f"recent_failure ({since} requests ago)", state)
     if cfg.route_mode == "random":
         coin: Tier = "local" if random.random() < cfg.random_local_share else "frontier"  # noqa: S311
-        return Decision(coin, "random", state)
+        return Decision(coin, "random", state, tests_passed=passed_tests_just_ran(evs))
     started = time.perf_counter()
     try:
         p_easy = await ask_judge(cfg, client, state)
@@ -203,4 +223,6 @@ async def decide(
         return Decision("frontier", "judge_error", state, judge_ms=ms, judge_error=repr(exc))
     ms = (time.perf_counter() - started) * 1000.0
     tier: Tier = "local" if p_easy > cfg.easy_threshold else "frontier"
-    return Decision(tier, "judge", state, p_easy=p_easy, judge_ms=ms)
+    return Decision(
+        tier, "judge", state, p_easy=p_easy, judge_ms=ms, tests_passed=passed_tests_just_ran(evs)
+    )

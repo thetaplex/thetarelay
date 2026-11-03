@@ -216,6 +216,7 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             "judge_ms": decision.judge_ms,
             "judge_error": decision.judge_error,
             "judge_state": decision.judge_state,
+            "tests_passed": decision.tests_passed,
         }
         route_headers = {
             "x-thetarelay-tier": decision.tier,
@@ -241,8 +242,14 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             if can_fall_back and upstream.status_code >= 500:
                 escalation = "local_failed"
                 await upstream.aclose()
-            elif can_fall_back and cfg.escalate_on_stop and upstream.status_code == 200:
+            elif (
+                can_fall_back
+                and cfg.escalate_on_stop
+                and not decision.tests_passed
+                and upstream.status_code == 200
+            ):
                 # Buffer the local reply; replay it only if it continues the agent loop.
+                # After passing tests, a local reply that ends the turn is kept as is.
                 raw = await upstream.aread()
                 await upstream.aclose()
                 if _has_tool_call(raw):

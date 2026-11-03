@@ -11,7 +11,14 @@ import pytest
 
 from thetarelay.config import RouterConfig
 from thetarelay.proxy import StreamUsage, create_app
-from thetarelay.router import events, requests_since_failure, summarize
+from thetarelay.router import (
+    _FAILURE,
+    Event,
+    events,
+    passed_tests_just_ran,
+    requests_since_failure,
+    summarize,
+)
 
 ANTH_FAIL = {
     "messages": [
@@ -308,3 +315,53 @@ async def test_local_reply_without_tool_call_is_escalated(tmp_path: Path) -> Non
     assert resp.headers["x-thetarelay-tier"] == "frontier"
     assert resp.headers["x-thetarelay-reason"] == "judge; local_stopped"
     assert resp.content == b"data: frontier\n\n"
+
+
+def test_passed_tests_detection__only_clean_passing_runs() -> None:
+    def ev(*results: str) -> list[Event]:
+        return [Event("user", "fix it"), Event("call", "bash pytest")] + [
+            Event("result", r, bool(_FAILURE.search(r))) for r in results
+        ]
+
+    assert passed_tests_just_ran(ev("Successfully wrote to a.py", "17 passed in 0.01s"))
+    assert passed_tests_just_ran(ev("Ran 4 tests in 0.001s\n\nOK"))
+    assert not passed_tests_just_ran(ev("1 failed, 16 passed in 0.02s"))
+    assert not passed_tests_just_ran(ev("ls output: a.py b.py"))
+    assert not passed_tests_just_ran([*ev("17 passed"), Event("assistant", "done")])
+
+
+@pytest.mark.asyncio
+async def test_local_finish_after_passing_tests_is_kept(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, 0.9, escalate_on_stop=True)
+    text = b'data: {"choices":[{"delta":{"content":"All tests pass."},"finish_reason":"stop"}]}\n\n'
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "judge.test" in str(request.url):
+            return httpx.Response(
+                200, json={"answers": {"route": {"probabilities": {"easy": 0.9}}}}
+            )
+        body = text if "local.test" in str(request.url) else b"data: frontier\n\n"
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    passed = {
+        "messages": [
+            {"role": "user", "content": "Fix the date test"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "t1", "name": "bash", "input": {"command": "pytest"}}
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "17 passed in 0.01s"}
+                ],
+            },
+        ]
+    }
+    resp = await _post(app, {"model": "claude-x", "max_tokens": 10, "stream": True, **passed})
+    assert (resp.headers["x-thetarelay-tier"], resp.content) == ("local", text)
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    assert line["tests_passed"] is True
