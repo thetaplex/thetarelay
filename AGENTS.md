@@ -14,6 +14,6 @@ Python 3.13+, uv, hatchling, FastAPI, uvicorn, httpx. Optional extra: `headroom`
 ## Rules
 - Tests never hit real provider APIs; mock with `httpx.MockTransport`.
 - Never print or log secrets or API keys.
-- Preserve Anthropic and OpenAI prefix caches: forward request bodies unchanged except `model` (and thinking off for the lite tier). Never edit the system prompt, messages or tools.
+- Preserve Anthropic and OpenAI prefix caches: forward request bodies unchanged except `model` (thinking off for the lite tier; a top-level `cache_control` for OpenAI-format requests to `anthropic/` frontier models). Never edit the system prompt, messages or tools.
 - Never send the client's cloud credentials to the lite tier; it gets only `THETARELAY_LITE_API_KEY`.
 - Uncertain routing goes to the frontier tier (judge error, recent failure, oversized request).

@@ -54,6 +54,13 @@ provider sees the same prefix on each request, and its prompt cache continues to
 that go to the lite tier add messages after that prefix. The next frontier request still
 matches the cached prefix, if the cache has not expired.
 
+Anthropic models cache only when the request marks where the cache ends (`cache_control`).
+Agents add this marker only when they know that the model is an Anthropic model. Through
+ThetaRelay they do not know, because ThetaRelay picks the model. So for OpenAI-format requests to
+an `anthropic/` frontier model, ThetaRelay adds OpenRouter's top-level marker
+(`"cache_control": {"type": "ephemeral"}`) if the request has no marker. OpenRouter then puts
+the cache boundary at the end of the prompt. The system prompt and the messages do not change.
+
 ## Measured judge accuracy
 
 On 59 coding-agent steps written and labelled by hand (30 easy, 29 hard), at a threshold of

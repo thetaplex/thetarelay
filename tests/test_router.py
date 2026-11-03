@@ -407,3 +407,38 @@ def test_old_local_env_names_still_work(monkeypatch: pytest.MonkeyPatch) -> None
     assert RouterConfig.from_env().lite_timeout_seconds == 12.0
     monkeypatch.setenv("THETARELAY_LITE_MODEL", "new-name")
     assert RouterConfig.from_env().lite_model == "new-name"  # the new name wins
+
+
+@pytest.mark.asyncio
+async def test_openai_requests_to_anthropic_frontier_get_a_cache_marker(tmp_path: Path) -> None:
+    oai = {"model": "x", "messages": [{"role": "user", "content": "explain"}]}
+
+    async def post_oai(app: Any, body: dict[str, Any]) -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://relay"
+        ) as client:
+            await client.post("/v1/chat/completions", json=body)
+
+    app, calls = _app(tmp_path, 0.1, frontier_model="anthropic/claude-opus-5.5")
+    await post_oai(app, oai)
+    body = calls[-1][1]
+    assert body["cache_control"] == {"type": "ephemeral"}
+    assert body["messages"] == oai["messages"]  # the prompt itself is unchanged
+
+    # The client's own markers win; non-Anthropic models need none.
+    marked = {
+        **oai,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "explain", "cache_control": {"type": "ephemeral"}}
+                ],
+            }
+        ],
+    }
+    await post_oai(app, marked)
+    assert "cache_control" not in calls[-1][1]
+    app, calls = _app(tmp_path, 0.1)
+    await post_oai(app, oai)
+    assert "cache_control" not in calls[-1][1]

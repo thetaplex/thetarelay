@@ -22,6 +22,10 @@ ThetaRelay is now a routing proxy. Speculative drafting is removed.
 - `THETARELAY_LITE_TIMEOUT` (default 30 s): a silent lite model falls back to the frontier tier.
 - A lite reply that ends the agent's turn goes to the frontier tier, unless the tests just passed.
 
+### Fixed
+
+- OpenAI-format requests to an `anthropic/` frontier model on OpenRouter were never cached: the agent cannot add Anthropic cache markers because it does not know which model the proxy picks. ThetaRelay now adds OpenRouter's top-level `cache_control` marker when the request has none. In a test with Opus 5.5, the second identical 6,000-token request cost $0.0013 instead of $0.030.
+
 ### Changed
 
 - Renamed the easy tier from "local" to "lite", because it can also be a hosted model: `THETARELAY_LOCAL_*` is now `THETARELAY_LITE_*` (the old names still work), and the tier, reasons and counters say `lite` (`x-thetarelay-tier: lite`, `too_large_for_lite`, `lite_failed`, `lite_stopped`, `lite_requests`).

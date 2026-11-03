@@ -58,6 +58,15 @@ def _outbound(
             hdrs["authorization"] = f"Bearer {cfg.lite_api_key}"
         return cfg.lite_base_url + _PATHS[provider], out, hdrs
     out["model"] = cfg.frontier_model
+    if (
+        provider == "openai"
+        and cfg.frontier_model.startswith("anthropic/")
+        and b"cache_control" not in json.dumps(body).encode()
+    ):
+        # Anthropic models cache only with a cache_control marker. The client cannot add one:
+        # it does not know which model the proxy picks. OpenRouter's top-level marker moves the
+        # breakpoint to the end of the prompt and leaves messages and system prompt untouched.
+        out["cache_control"] = {"type": "ephemeral"}
     if cfg.frontier_api_key:
         hdrs = {k: v for k, v in hdrs.items() if k.lower() not in _CREDENTIAL_HEADERS}
         hdrs["authorization"] = f"Bearer {cfg.frontier_api_key}"
