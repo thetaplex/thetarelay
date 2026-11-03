@@ -46,6 +46,9 @@ class RouterConfig:
     # Requests larger than this (characters of system + messages + tools) go to the frontier
     # tier, because the local model cannot read them. About 4 characters per token.
     local_max_request_chars: int = 100_000
+    # Seconds the local server may stay silent (before the first byte, or between chunks)
+    # before the request falls back to the frontier tier. A hung local model costs this much.
+    local_timeout_seconds: float = 30.0
 
     # Hard tier: a server with both APIs (OpenRouter). Base URL without `/v1`.
     frontier_base_url: str = "https://openrouter.ai/api"
@@ -102,6 +105,7 @@ class RouterConfig:
             local_max_request_chars=_env_int(
                 "THETARELAY_LOCAL_MAX_REQUEST_CHARS", cls.local_max_request_chars
             ),
+            local_timeout_seconds=_env_float("THETARELAY_LOCAL_TIMEOUT", cls.local_timeout_seconds),
             frontier_base_url=_env("THETARELAY_FRONTIER_BASE_URL", cls.frontier_base_url).rstrip(
                 "/"
             ),

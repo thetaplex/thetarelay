@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
-RESULTS = HERE / "results"
+RESULTS = Path(os.environ.get("ROUTING_EVAL_RESULTS", HERE / "results"))
 BENCH = Path.home() / ".cache/thetarelay/polyglot-benchmark/python/exercises/practice"
 PORT = 8790
 ARMS: dict[str, dict[str, str]] = {
@@ -147,7 +147,9 @@ def local_share(turn_logs: list[Path]) -> float:
 def run(args: argparse.Namespace) -> None:
     RESULTS.mkdir(exist_ok=True)
     exercises = sorted(p for p in BENCH.iterdir() if p.is_dir())
-    if args.limit:
+    if args.exercises:
+        exercises = [ex for ex in exercises if ex.name in args.exercises.split(",")]
+    elif args.limit:
         exercises = random.Random(0).sample(exercises, args.limit)
     out = RESULTS / "attempts.jsonl"
     done = set()
@@ -267,8 +269,9 @@ def main() -> None:
     r = sub.add_parser("run")
     r.add_argument("--arms", default="frontier,judge,random,local")
     r.add_argument("--runs", type=int, default=1)
+    r.add_argument("--exercises", default="", help="comma-separated exercise names")
     r.add_argument("--limit", type=int, default=0, help="random subset of exercises (seed 0)")
-    r.add_argument("--timeout", type=int, default=600, help="seconds per attempt")
+    r.add_argument("--timeout", type=int, default=180, help="seconds per attempt")
     sub.add_parser("report")
     args = parser.parse_args()
     {"run": run, "report": report}[args.cmd](args)

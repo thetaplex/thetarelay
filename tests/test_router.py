@@ -365,3 +365,26 @@ async def test_local_finish_after_passing_tests_is_kept(tmp_path: Path) -> None:
     assert (resp.headers["x-thetarelay-tier"], resp.content) == ("local", text)
     line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
     assert line["tests_passed"] is True
+
+
+@pytest.mark.asyncio
+async def test_silent_local_model_falls_back_with_short_timeout(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, 0.9, local_timeout_seconds=0.5)
+    seen: dict[str, Any] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "judge.test" in str(request.url):
+            return httpx.Response(
+                200, json={"answers": {"route": {"probabilities": {"easy": 0.9}}}}
+            )
+        if "local.test" in str(request.url):
+            seen["local"] = request.extensions["timeout"]
+            raise httpx.ReadTimeout("silent", request=request)
+        seen["frontier"] = request.extensions["timeout"]
+        return httpx.Response(200, json={"content": []})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    resp = await _post(app, EASY)
+    assert resp.headers["x-thetarelay-reason"] == "judge; local_failed"
+    assert seen["local"]["read"] == 0.5
+    assert seen["frontier"]["read"] != 0.5  # frontier keeps the client default

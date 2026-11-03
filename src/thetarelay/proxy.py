@@ -229,8 +229,14 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
         started = time.perf_counter()
 
         async def send(url: str, out_body: dict[str, Any], hdrs: dict[str, str]) -> httpx.Response:
+            local = url.startswith(cfg.local_base_url)
             req = client.build_request(
-                "POST", url + query, content=json.dumps(out_body).encode(), headers=hdrs
+                "POST",
+                url + query,
+                content=json.dumps(out_body).encode(),
+                headers=hdrs,
+                # A silent local model falls back quickly; the frontier keeps the client default.
+                timeout=httpx.Timeout(cfg.local_timeout_seconds, connect=5.0) if local else None,
             )
             return await client.send(req, stream=record["stream"])
 
