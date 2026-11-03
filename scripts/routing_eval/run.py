@@ -1,7 +1,7 @@
 """Run Pi through ThetaRelay on Aider Polyglot Python exercises, once per routing arm.
 
 Usage:
-    uv run python scripts/routing_eval/run.py run --arms frontier,judge,random,local --runs 1
+    uv run python scripts/routing_eval/run.py run --arms frontier,judge,random,lite --runs 1
     uv run python scripts/routing_eval/run.py report
 
 Each attempt: copy the exercise (stub + tests + instructions) to a fresh directory, run
@@ -36,7 +36,7 @@ ARMS: dict[str, dict[str, str]] = {
     "frontier": {"THETARELAY_ROUTE_MODE": "frontier"},
     "judge": {"THETARELAY_ROUTE_MODE": "judge"},
     "random": {"THETARELAY_ROUTE_MODE": "random"},  # share set from the judge arm, see run()
-    "local": {"THETARELAY_ROUTE_MODE": "local"},
+    "lite": {"THETARELAY_ROUTE_MODE": "lite"},
 }
 # Aider's polyglot benchmark wording, plus where the instructions and tests are.
 PROMPT = (
@@ -141,7 +141,7 @@ def attempt(ex: Path, agent_dir: Path, timeout: int) -> dict[str, Any]:
 
 def local_share(turn_logs: list[Path]) -> float:
     rows = [json.loads(ln) for p in turn_logs if p.exists() for ln in p.read_text().splitlines()]
-    return sum(r["tier"] == "local" for r in rows) / len(rows) if rows else 0.5
+    return sum(r["tier"] == "lite" for r in rows) / len(rows) if rows else 0.5
 
 
 def run(args: argparse.Namespace) -> None:
@@ -163,7 +163,7 @@ def run(args: argparse.Namespace) -> None:
             env = dict(ARMS[arm])
             if arm == "random":
                 share = local_share(sorted(RESULTS.glob("turns-judge-*.jsonl")))
-                env["THETARELAY_RANDOM_LOCAL_SHARE"] = f"{share:.3f}"
+                env["THETARELAY_RANDOM_LITE_SHARE"] = f"{share:.3f}"
             todo = [ex for ex in exercises if (arm, run_no, ex.name) not in done]
             if not todo:
                 continue
@@ -226,7 +226,7 @@ def report(_: argparse.Namespace) -> None:
         by_arm[r["arm"]][(r["run"], r["exercise"])] = r["passed"]
         secs[r["arm"]].append(r["agent_s"])
     print(
-        f"{'arm':9}{'pass':>11}{'requests':>10}{'local %':>9}{'cost $':>9}"
+        f"{'arm':9}{'pass':>11}{'requests':>10}{'lite %':>9}{'cost $':>9}"
         f"{'$/task':>8}{'cache %':>9}{'s/task':>8}  vs frontier (95% CI)"
     )
     base = by_arm.get("frontier", {})
@@ -243,10 +243,10 @@ def report(_: argparse.Namespace) -> None:
         cost = sum(t.get("cost_usd") or 0 for t in front)
         inp = sum(t.get("input_tokens") or 0 for t in front)
         cached = sum(t.get("cached_tokens") or 0 for t in front)
-        local = sum(t["tier"] == "local" for t in turns)
+        lite = sum(t["tier"] == "lite" for t in turns)
         line = (
             f"{arm:9}{sum(res.values()):>5}/{len(res):<5}{len(turns):>10}"
-            f"{100 * local / max(len(turns), 1):>8.0f}%{cost:>9.2f}{cost / len(res):>8.3f}"
+            f"{100 * lite / max(len(turns), 1):>8.0f}%{cost:>9.2f}{cost / len(res):>8.3f}"
             f"{100 * cached / max(inp, 1):>8.0f}%{sum(secs[arm]) / len(secs[arm]):>8.0f}"
         )
         keys = sorted(set(res) & set(base))
@@ -267,7 +267,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
-    r.add_argument("--arms", default="frontier,judge,random,local")
+    r.add_argument("--arms", default="frontier,judge,random,lite")
     r.add_argument("--runs", type=int, default=1)
     r.add_argument("--exercises", default="", help="comma-separated exercise names")
     r.add_argument("--limit", type=int, default=0, help="random subset of exercises (seed 0)")

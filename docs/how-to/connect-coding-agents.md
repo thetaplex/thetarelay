@@ -5,7 +5,7 @@ Set the base URL of the agent to the proxy address. The default address is
 
 ThetaRelay sends the frontier key (`OPENROUTER_API_KEY` or `THETARELAY_FRONTIER_API_KEY`) to
 the frontier tier in place of the key of the agent. If neither variable is set, it sends the
-key of the agent. It never sends a key to the local tier.
+key of the agent. It never sends a key to the lite tier.
 
 ## Agents that use the Anthropic Messages API
 
@@ -35,7 +35,7 @@ Examples: OpenCode, Pi, Aider and Cursor with an OpenAI provider.
 
 1. Start the proxy with `--debug`.
 2. Send one request from the agent.
-3. Make sure that the proxy prints a line with `→ local` or `→ frontier`.
+3. Make sure that the proxy prints a line with `→ lite` or `→ frontier`.
 4. Show the request counts:
 
    ```sh

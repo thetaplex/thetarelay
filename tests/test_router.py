@@ -71,7 +71,7 @@ def _app(
     tmp_path: Path, p_easy: float | None, **overrides: Any
 ) -> tuple[Any, list[tuple[str, dict[str, Any], dict[str, str]]]]:
     cfg = RouterConfig(
-        local_base_url="http://local.test",
+        lite_base_url="http://local.test",
         frontier_base_url="http://frontier.test/api",
         judge_url="http://judge.test/v1/systemone",
         frontier_api_key="sk-frontier",
@@ -115,7 +115,7 @@ EASY = {"model": "claude-x", "max_tokens": 10, "messages": [{"role": "user", "co
 async def test_easy_request_goes_local_without_cloud_credentials(tmp_path: Path) -> None:
     app, calls = _app(tmp_path, 0.9)
     resp = await _post(app, EASY)
-    assert resp.headers["x-thetarelay-tier"] == "local"
+    assert resp.headers["x-thetarelay-tier"] == "lite"
     url, body, headers = calls[-1]
     assert url == "http://local.test/v1/messages"
     assert body["model"] == "gemma4:e4b"
@@ -153,8 +153,8 @@ async def test_recent_failure_skips_the_judge(tmp_path: Path) -> None:
 async def test_judge_error_and_large_requests_go_to_frontier(tmp_path: Path) -> None:
     app, _ = _app(tmp_path, None)
     assert (await _post(app, EASY)).headers["x-thetarelay-reason"] == "judge_error"
-    app, calls = _app(tmp_path, 0.99, local_max_request_chars=10)
-    assert (await _post(app, EASY)).headers["x-thetarelay-reason"] == "too_large_for_local"
+    app, calls = _app(tmp_path, 0.99, lite_max_request_chars=10)
+    assert (await _post(app, EASY)).headers["x-thetarelay-reason"] == "too_large_for_lite"
     assert not any("judge.test" in c[0] for c in calls)
 
 
@@ -176,7 +176,7 @@ async def test_local_server_down_falls_back_to_frontier(tmp_path: Path) -> None:
     resp = await _post(app, EASY)
     assert resp.status_code == 200
     assert resp.headers["x-thetarelay-tier"] == "frontier"
-    assert resp.headers["x-thetarelay-reason"] == "judge; local_failed"
+    assert resp.headers["x-thetarelay-reason"] == "judge; lite_failed"
 
 
 @pytest.mark.asyncio
@@ -184,7 +184,7 @@ async def test_turn_log_and_stats_record_each_decision(tmp_path: Path) -> None:
     app, _ = _app(tmp_path, 0.9)
     await _post(app, EASY)
     line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[0])
-    assert line["tier"] == "local"
+    assert line["tier"] == "lite"
     assert line["reason"] == "judge"
     assert line["p_easy"] == 0.9
     assert line["judge_state"]["last_message"] == "[user] ls"
@@ -194,7 +194,7 @@ async def test_turn_log_and_stats_record_each_decision(tmp_path: Path) -> None:
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://relay"
     ) as client:
-        assert (await client.get("/stats")).json()["counts"] == {"local_requests": 1}
+        assert (await client.get("/stats")).json()["counts"] == {"lite_requests": 1}
 
 
 @pytest.mark.asyncio
@@ -264,10 +264,10 @@ async def test_route_modes_for_evaluation_baselines(tmp_path: Path) -> None:
     assert (await _post(app, EASY)).headers["x-thetarelay-tier"] == "frontier"
     assert not any("judge.test" in c[0] for c in calls)
 
-    app, calls = _app(tmp_path, 0.01, route_mode="random", random_local_share=1.0)
+    app, calls = _app(tmp_path, 0.01, route_mode="random", random_lite_share=1.0)
     resp = await _post(app, EASY)
     assert (resp.headers["x-thetarelay-tier"], resp.headers["x-thetarelay-reason"]) == (
-        "local",
+        "lite",
         "random",
     )
     assert not any("judge.test" in c[0] for c in calls)
@@ -275,7 +275,7 @@ async def test_route_modes_for_evaluation_baselines(tmp_path: Path) -> None:
     resp = await _post(app, {"model": "claude-x", "max_tokens": 10, **ANTH_FAIL})
     assert resp.headers["x-thetarelay-tier"] == "frontier"
 
-    app, calls = _app(tmp_path, 0.01, route_mode="local")
+    app, calls = _app(tmp_path, 0.01, route_mode="lite")
 
     async def down(request: httpx.Request) -> httpx.Response:
         calls.append((str(request.url), {}, {}))
@@ -283,7 +283,7 @@ async def test_route_modes_for_evaluation_baselines(tmp_path: Path) -> None:
 
     app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(down))
     resp = await _post(app, EASY)
-    assert resp.status_code == 503  # forced local: no fallback
+    assert resp.status_code == 503  # forced lite: no fallback
     assert not any("frontier.test" in c[0] for c in calls)
 
     with pytest.raises(ValueError, match="route_mode"):
@@ -295,7 +295,7 @@ async def test_local_reply_without_tool_call_is_escalated(tmp_path: Path) -> Non
     app, calls = _app(tmp_path, 0.9, escalate_on_stop=True)
     tool = b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
     text = b'data: {"choices":[{"delta":{"content":"done?"},"finish_reason":"stop"}]}\n\n'
-    replies = {"local": tool}
+    replies = {"lite": tool}
 
     async def handler(request: httpx.Request) -> httpx.Response:
         calls.append((str(request.url), {}, {}))
@@ -303,17 +303,17 @@ async def test_local_reply_without_tool_call_is_escalated(tmp_path: Path) -> Non
             return httpx.Response(
                 200, json={"answers": {"route": {"probabilities": {"easy": 0.9}}}}
             )
-        body = replies["local"] if "local.test" in str(request.url) else b"data: frontier\n\n"
+        body = replies["lite"] if "local.test" in str(request.url) else b"data: frontier\n\n"
         return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
 
     app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     resp = await _post(app, {**EASY, "stream": True})
-    assert (resp.headers["x-thetarelay-tier"], resp.content) == ("local", tool)
+    assert (resp.headers["x-thetarelay-tier"], resp.content) == ("lite", tool)
 
-    replies["local"] = text
+    replies["lite"] = text
     resp = await _post(app, {**EASY, "stream": True})
     assert resp.headers["x-thetarelay-tier"] == "frontier"
-    assert resp.headers["x-thetarelay-reason"] == "judge; local_stopped"
+    assert resp.headers["x-thetarelay-reason"] == "judge; lite_stopped"
     assert resp.content == b"data: frontier\n\n"
 
 
@@ -362,14 +362,14 @@ async def test_local_finish_after_passing_tests_is_kept(tmp_path: Path) -> None:
         ]
     }
     resp = await _post(app, {"model": "claude-x", "max_tokens": 10, "stream": True, **passed})
-    assert (resp.headers["x-thetarelay-tier"], resp.content) == ("local", text)
+    assert (resp.headers["x-thetarelay-tier"], resp.content) == ("lite", text)
     line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
     assert line["tests_passed"] is True
 
 
 @pytest.mark.asyncio
-async def test_silent_local_model_falls_back_with_short_timeout(tmp_path: Path) -> None:
-    app, _ = _app(tmp_path, 0.9, local_timeout_seconds=0.5)
+async def test_silent_lite_model_falls_back_with_short_timeout(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, 0.9, lite_timeout_seconds=0.5)
     seen: dict[str, Any] = {}
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -378,13 +378,32 @@ async def test_silent_local_model_falls_back_with_short_timeout(tmp_path: Path) 
                 200, json={"answers": {"route": {"probabilities": {"easy": 0.9}}}}
             )
         if "local.test" in str(request.url):
-            seen["local"] = request.extensions["timeout"]
+            seen["lite"] = request.extensions["timeout"]
             raise httpx.ReadTimeout("silent", request=request)
         seen["frontier"] = request.extensions["timeout"]
         return httpx.Response(200, json={"content": []})
 
     app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     resp = await _post(app, EASY)
-    assert resp.headers["x-thetarelay-reason"] == "judge; local_failed"
-    assert seen["local"]["read"] == 0.5
+    assert resp.headers["x-thetarelay-reason"] == "judge; lite_failed"
+    assert seen["lite"]["read"] == 0.5
     assert seen["frontier"]["read"] != 0.5  # frontier keeps the client default
+
+
+@pytest.mark.asyncio
+async def test_hosted_lite_model_gets_its_own_key_not_the_clients(tmp_path: Path) -> None:
+    app, calls = _app(tmp_path, 0.9, lite_api_key="sk-lite")
+    await _post(app, EASY)
+    url, _, headers = calls[-1]
+    assert url == "http://local.test/v1/messages"
+    assert headers["authorization"] == "Bearer sk-lite"
+    assert "x-api-key" not in headers  # the client's key never goes to the lite tier
+
+
+def test_old_local_env_names_still_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("THETARELAY_LOCAL_MODEL", "old-name")
+    monkeypatch.setenv("THETARELAY_LOCAL_TIMEOUT", "12")
+    assert RouterConfig.from_env().lite_model == "old-name"
+    assert RouterConfig.from_env().lite_timeout_seconds == 12.0
+    monkeypatch.setenv("THETARELAY_LITE_MODEL", "new-name")
+    assert RouterConfig.from_env().lite_model == "new-name"  # the new name wins

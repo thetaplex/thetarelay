@@ -18,9 +18,13 @@ ThetaRelay is now a routing proxy. Speculative drafting is removed.
 - `x-thetarelay-tier`, `x-thetarelay-model`, `x-thetarelay-reason` and `x-thetarelay-p-easy` response headers.
 - `thetarelay judge`: ask the judge about one step.
 - `scripts/judge_eval/`: compare judges on labelled steps.
+- `THETARELAY_LITE_API_KEY`: a key for a hosted lite model, for example on OpenRouter.
+- `THETARELAY_LITE_TIMEOUT` (default 30 s): a silent lite model falls back to the frontier tier.
+- A lite reply that ends the agent's turn goes to the frontier tier, unless the tests just passed.
 
 ### Changed
 
+- Renamed the easy tier from "local" to "lite", because it can also be a hosted model: `THETARELAY_LOCAL_*` is now `THETARELAY_LITE_*` (the old names still work), and the tier, reasons and counters say `lite` (`x-thetarelay-tier: lite`, `too_large_for_lite`, `lite_failed`, `lite_stopped`, `lite_requests`).
 - Renamed the project from ThetaCode to ThetaRelay: package `thetarelay`, CLI `thetarelay`, environment variables `THETARELAY_*`, stats endpoint `/thetarelay/stats`.
 - Python 3.13 or later is now required (was 3.11).
 

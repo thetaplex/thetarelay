@@ -1,4 +1,4 @@
-"""Decide whether a coding-agent request goes to the local (easy) or frontier (hard) tier.
+"""Decide whether a coding-agent request goes to the lite (easy) or frontier (hard) tier.
 
 Everything here is derived from the request itself: agents resend the whole conversation on
 every request, so the proxy keeps no per-conversation state and survives restarts.
@@ -18,13 +18,13 @@ import httpx
 
 from .config import RouterConfig
 
-Tier = Literal["local", "frontier"]
+Tier = Literal["lite", "frontier"]
 
 JUDGE_QUESTION = {
     "route": {
         "type": "choice",
         "instructions": (
-            "A coding agent is about to take its next step. Can a small local model handle "
+            "A coding agent is about to take its next step. Can a small, fast model handle "
             "this step correctly, or does it need a frontier model?"
         ),
         "criteria": {
@@ -69,7 +69,7 @@ class Decision:
     p_easy: float | None = None
     judge_ms: float | None = None
     judge_error: str | None = None
-    # The tool results just before this request include a passing test run, so a local reply
+    # The tool results just before this request include a passing test run, so a lite reply
     # that ends the agent's turn is a legitimate finish, not giving up.
     tests_passed: bool = False
 
@@ -205,15 +205,15 @@ async def decide(
 ) -> Decision:
     evs = events(body, provider)
     state = summarize(evs)
-    if cfg.route_mode in ("local", "frontier"):
+    if cfg.route_mode in ("lite", "frontier"):
         return Decision(cfg.route_mode, f"forced_{cfg.route_mode}", state)  # type: ignore[arg-type]
-    if request_chars(body) > cfg.local_max_request_chars:
-        return Decision("frontier", "too_large_for_local", state)
+    if request_chars(body) > cfg.lite_max_request_chars:
+        return Decision("frontier", "too_large_for_lite", state)
     since = requests_since_failure(evs)
     if since is not None and since < cfg.stay_requests:
         return Decision("frontier", f"recent_failure ({since} requests ago)", state)
     if cfg.route_mode == "random":
-        coin: Tier = "local" if random.random() < cfg.random_local_share else "frontier"  # noqa: S311
+        coin: Tier = "lite" if random.random() < cfg.random_lite_share else "frontier"  # noqa: S311
         return Decision(coin, "random", state, tests_passed=passed_tests_just_ran(evs))
     started = time.perf_counter()
     try:
@@ -222,7 +222,7 @@ async def decide(
         ms = (time.perf_counter() - started) * 1000.0
         return Decision("frontier", "judge_error", state, judge_ms=ms, judge_error=repr(exc))
     ms = (time.perf_counter() - started) * 1000.0
-    tier: Tier = "local" if p_easy > cfg.easy_threshold else "frontier"
+    tier: Tier = "lite" if p_easy > cfg.easy_threshold else "frontier"
     return Decision(
         tier, "judge", state, p_easy=p_easy, judge_ms=ms, tests_passed=passed_tests_just_ran(evs)
     )

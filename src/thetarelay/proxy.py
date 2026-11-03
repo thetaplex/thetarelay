@@ -1,4 +1,4 @@
-"""FastAPI routing proxy: each request goes to the local or the frontier tier, unchanged."""
+"""FastAPI routing proxy: each request goes to the lite or the frontier tier, unchanged."""
 
 from __future__ import annotations
 
@@ -40,21 +40,23 @@ def _outbound(
     """Build the upstream URL, body and headers for the chosen tier.
 
     Frontier requests change only in `model`, so the frontier provider sees the same prefix on
-    every request and its prompt cache keeps working. Local requests also turn thinking off, so
-    the local model answers quickly; that change never reaches the frontier provider.
+    every request and its prompt cache keeps working. Lite requests also turn thinking off, so
+    the lite model answers quickly; that change never reaches the frontier provider.
     """
     out = copy.copy(body)
     hdrs = {k: v for k, v in headers.items() if k.lower() not in _DROP_REQUEST_HEADERS}
-    if tier == "local":
-        out["model"] = cfg.local_model
-        if cfg.local_disable_thinking:
+    if tier == "lite":
+        out["model"] = cfg.lite_model
+        if cfg.lite_disable_thinking:
             if provider == "anthropic":
                 out["thinking"] = {"type": "disabled"}
             else:
                 out["reasoning_effort"] = "none"
-        # The client's cloud credentials never go to the local server.
+        # The client's credentials never go to the lite tier; it gets its own key, if any.
         hdrs = {k: v for k, v in hdrs.items() if k.lower() not in _CREDENTIAL_HEADERS}
-        return cfg.local_base_url + _PATHS[provider], out, hdrs
+        if cfg.lite_api_key:
+            hdrs["authorization"] = f"Bearer {cfg.lite_api_key}"
+        return cfg.lite_base_url + _PATHS[provider], out, hdrs
     out["model"] = cfg.frontier_model
     if cfg.frontier_api_key:
         hdrs = {k: v for k, v in hdrs.items() if k.lower() not in _CREDENTIAL_HEADERS}
@@ -185,7 +187,7 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             "service": "thetarelay",
             "headroom_middleware_active": app.state.headroom_middleware_active,
             "config": {
-                "local_model": cfg.local_model,
+                "lite_model": cfg.lite_model,
                 "frontier_model": cfg.frontier_model,
                 "judge_model": cfg.judge_model,
                 "easy_threshold": cfg.easy_threshold,
@@ -229,24 +231,24 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
         started = time.perf_counter()
 
         async def send(url: str, out_body: dict[str, Any], hdrs: dict[str, str]) -> httpx.Response:
-            local = url.startswith(cfg.local_base_url)
+            lite = url.startswith(cfg.lite_base_url)
             req = client.build_request(
                 "POST",
                 url + query,
                 content=json.dumps(out_body).encode(),
                 headers=hdrs,
-                # A silent local model falls back quickly; the frontier keeps the client default.
-                timeout=httpx.Timeout(cfg.local_timeout_seconds, connect=5.0) if local else None,
+                # A silent lite model falls back quickly; the frontier keeps the client default.
+                timeout=httpx.Timeout(cfg.lite_timeout_seconds, connect=5.0) if lite else None,
             )
             return await client.send(req, stream=record["stream"])
 
-        # Forced-local mode (evaluation baseline) must not fall back to the frontier.
-        can_fall_back = decision.tier == "local" and cfg.route_mode != "local"
+        # Forced-lite mode (evaluation baseline) must not fall back to the frontier.
+        can_fall_back = decision.tier == "lite" and cfg.route_mode != "lite"
         escalation = ""
         try:
             upstream = await send(url, out_body, hdrs)
             if can_fall_back and upstream.status_code >= 500:
-                escalation = "local_failed"
+                escalation = "lite_failed"
                 await upstream.aclose()
             elif (
                 can_fall_back
@@ -254,8 +256,8 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                 and not decision.tests_passed
                 and upstream.status_code == 200
             ):
-                # Buffer the local reply; replay it only if it continues the agent loop.
-                # After passing tests, a local reply that ends the turn is kept as is.
+                # Buffer the lite reply; replay it only if it continues the agent loop.
+                # After passing tests, a lite reply that ends the turn is kept as is.
                 raw = await upstream.aread()
                 await upstream.aclose()
                 if _has_tool_call(raw):
@@ -263,14 +265,14 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                         200, headers=upstream.headers, stream=httpx.ByteStream(raw)
                     )
                 else:
-                    escalation = "local_stopped"
-                    record["local_output_chars"] = len(raw)
+                    escalation = "lite_stopped"
+                    record["lite_output_chars"] = len(raw)
         except httpx.TransportError:
             if not can_fall_back:
                 raise
-            escalation = "local_failed"
+            escalation = "lite_failed"
         if escalation:
-            # The local server is down, or its reply would end the agent's turn.
+            # The lite server is down, or its reply would end the agent's turn.
             decision.tier = "frontier"
             record["reason"] = decision.reason = f"{decision.reason}; {escalation}"
             url, out_body, hdrs = _outbound(cfg, body, in_headers, "frontier", provider)

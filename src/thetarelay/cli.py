@@ -19,7 +19,7 @@ from .router import ask_judge
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="thetarelay",
-        description="ThetaRelay: route coding-agent requests to a local or a frontier model",
+        description="ThetaRelay: route coding-agent requests to a lite or a frontier model",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -49,7 +49,7 @@ def main(argv: list[str] | None = None) -> None:
                 return await ask_judge(cfg, client, state)
 
         p_easy = asyncio.run(run())
-        tier = "local" if p_easy > cfg.easy_threshold else "frontier"
+        tier = "lite" if p_easy > cfg.easy_threshold else "frontier"
         print(
             json.dumps({"p_easy": round(p_easy, 4), "threshold": cfg.easy_threshold, "tier": tier})
         )
@@ -70,8 +70,8 @@ def main(argv: list[str] | None = None) -> None:
     print(
         f"thetarelay listening on http://{cfg.host}:{cfg.port}\n"
         f"  judge:    {cfg.judge_model} at {cfg.judge_url} "
-        f"(local if P(easy) > {cfg.easy_threshold})\n"
-        f"  local:    {cfg.local_model} at {cfg.local_base_url}\n"
+        f"(lite if P(easy) > {cfg.easy_threshold})\n"
+        f"  lite:     {cfg.lite_model} at {cfg.lite_base_url}\n"
         f"  frontier: {cfg.frontier_model} at {cfg.frontier_base_url}\n"
         f"  turn log: {cfg.turn_log_path or 'off'}   debug: {'on' if cfg.debug else 'off'}",
         file=sys.stderr,

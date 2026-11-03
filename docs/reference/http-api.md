@@ -12,15 +12,15 @@
 ThetaRelay forwards the request body without change, except:
 
 - `model` is set to the model of the tier.
-- For the local tier, thinking is turned off (see `THETARELAY_LOCAL_DISABLE_THINKING`).
+- For the lite tier, thinking is turned off (see `THETARELAY_LITE_DISABLE_THINKING`).
 
 ## Response headers
 
 | Header | Value |
 |---|---|
-| `x-thetarelay-tier` | `local` or `frontier` |
+| `x-thetarelay-tier` | `lite` or `frontier` |
 | `x-thetarelay-model` | Model that wrote the response |
-| `x-thetarelay-reason` | `judge`, `recent_failure (N requests ago)`, `too_large_for_local` or `judge_error`. `; local_failed` is added if the local server failed and the frontier tier answered. |
+| `x-thetarelay-reason` | `judge`, `recent_failure (N requests ago)`, `too_large_for_lite` or `judge_error`. `; lite_failed` is added if the local server failed and the frontier tier answered. |
 | `x-thetarelay-p-easy` | The judge's P(easy), if the judge was asked |
 
 ## Turn log

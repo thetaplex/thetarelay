@@ -68,7 +68,7 @@ just setup
 With `--debug`, ThetaRelay prints one line for each request:
 
 ```text
-[thetarelay] conv 33723461a51d msg 1  P(easy)=0.99  judge → local (gemma4:e4b)  status 200  4689 ms
+[thetarelay] conv 33723461a51d msg 1  P(easy)=0.99  judge → lite (gemma4:e4b)  status 200  4689 ms
 [thetarelay] conv 1af65bd07298 msg 1  P(easy)=0.21  judge → frontier (openai/gpt-6.1-terra)  status 200  2884 ms
 ```
 
