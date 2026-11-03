@@ -442,3 +442,33 @@ async def test_openai_requests_to_anthropic_frontier_get_a_cache_marker(tmp_path
     app, calls = _app(tmp_path, 0.1)
     await post_oai(app, oai)
     assert "cache_control" not in calls[-1][1]
+
+
+@pytest.mark.asyncio
+async def test_unrecoverable_upstream_transport_error_returns_502(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, 0.1)
+
+    async def down(request: httpx.Request) -> httpx.Response:
+        if "judge.test" in str(request.url):
+            return httpx.Response(
+                200, json={"answers": {"route": {"probabilities": {"easy": 0.1}}}}
+            )
+        raise httpx.ConnectError("frontier unreachable")
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(down))
+    resp = await _post(app, EASY)
+    assert resp.status_code == 502
+    assert resp.json()["error"]["type"] == "upstream_error"
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    assert line["status"] == 502
+
+
+@pytest.mark.asyncio
+async def test_turn_log_has_owner_only_permissions_and_non_loopback_warns(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    app, _ = _app(tmp_path, 0.9, host="0.0.0.0")  # noqa: S104
+    assert "exposes upstream credentials" in caplog.text
+    await _post(app, EASY)
+    mode = (tmp_path / "turns.jsonl").stat().st_mode & 0o777
+    assert mode == 0o600

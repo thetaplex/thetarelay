@@ -27,6 +27,9 @@ the tier.
 4. **Errors.** If the judge does not answer, the request goes to the frontier tier. If the lite
    server does not answer or returns a 5xx status, ThetaRelay sends the same request to the
    frontier tier.
+5. **Stopping.** If `THETARELAY_ESCALATE_ON_STOP` is `true` (the default) and the lite response
+   contains no tool call (so it would end the agent's turn), ThetaRelay discards it and sends the
+   request to the frontier tier, unless the trailing tool results show a passing test run.
 
 A wrong decision has two different costs. An easy step sent to the frontier tier costs money
 only. A hard step sent to the lite tier can cost quality. For this reason every uncertain case

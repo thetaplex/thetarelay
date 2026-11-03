@@ -6,12 +6,12 @@ import contextlib
 import copy
 import json
 import logging
+import os
 import sys
 import time
 from collections import Counter
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -150,7 +150,8 @@ class TurnRecorder:
             return
         try:
             # ponytail: blocking append per request; fine for one developer, queue it if hot.
-            with Path(self.cfg.turn_log_path).open("a", encoding="utf-8") as fh:
+            fd = os.open(self.cfg.turn_log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
         except OSError as exc:
             logger.warning("Could not write turn log: %s", exc)
@@ -176,6 +177,13 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
     app.state.config = cfg
     app.state.recorder = recorder
     app.state.headroom_middleware_active = False
+    if cfg.host not in ("127.0.0.1", "localhost", "::1") and (
+        cfg.frontier_api_key or cfg.lite_api_key
+    ):
+        logger.warning(
+            "Binding to %s with a configured API key exposes upstream credentials to the network.",
+            cfg.host,
+        )
     if cfg.enable_headroom_middleware:
         try:
             from headroom.integrations.asgi import CompressionMiddleware
@@ -251,6 +259,17 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             )
             return await client.send(req, stream=record["stream"])
 
+        def _bad_gateway(exc: httpx.TransportError) -> Response:
+            record["status"] = 502
+            record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
+            recorder.record(record)
+            return Response(
+                content=json.dumps({"error": {"type": "upstream_error", "message": str(exc)}}),
+                status_code=502,
+                media_type="application/json",
+                headers=route_headers,
+            )
+
         # Forced-lite mode (evaluation baseline) must not fall back to the frontier.
         can_fall_back = decision.tier == "lite" and cfg.route_mode != "lite"
         escalation = ""
@@ -276,9 +295,9 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                 else:
                     escalation = "lite_stopped"
                     record["lite_output_chars"] = len(raw)
-        except httpx.TransportError:
+        except httpx.TransportError as exc:
             if not can_fall_back:
-                raise
+                return _bad_gateway(exc)
             escalation = "lite_failed"
         if escalation:
             # The lite server is down, or its reply would end the agent's turn.
@@ -293,7 +312,10 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                     "x-thetarelay-reason": decision.reason,
                 }
             )
-            upstream = await send(url, out_body, hdrs)
+            try:
+                upstream = await send(url, out_body, hdrs)
+            except httpx.TransportError as exc:
+                return _bad_gateway(exc)
 
         if record["stream"]:
 
@@ -303,11 +325,14 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                     async for chunk in upstream.aiter_bytes():
                         usage.feed(chunk)
                         yield chunk
+                except httpx.TransportError as exc:
+                    logger.warning("Upstream stream interrupted: %s", exc)
+                    record["status"] = 502
                 finally:
                     await upstream.aclose()
                     if usage.usage:
                         record.update(_usage(provider, {"usage": usage.usage}))
-                    record["status"] = upstream.status_code
+                    record.setdefault("status", upstream.status_code)
                     record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
                     recorder.record(record)
 
@@ -322,7 +347,11 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             )
 
         resp = upstream
-        await resp.aread()
+        try:
+            await resp.aread()
+        except httpx.TransportError as exc:
+            await resp.aclose()
+            return _bad_gateway(exc)
         record["status"] = resp.status_code
         record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
         if resp.status_code == 200:
