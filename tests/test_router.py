@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -470,5 +471,6 @@ async def test_turn_log_has_owner_only_permissions_and_non_loopback_warns(
     app, _ = _app(tmp_path, 0.9, host="0.0.0.0")  # noqa: S104
     assert "exposes upstream credentials" in caplog.text
     await _post(app, EASY)
-    mode = (tmp_path / "turns.jsonl").stat().st_mode & 0o777
-    assert mode == 0o600
+    if sys.platform != "win32":  # Windows has no POSIX permission bits
+        mode = (tmp_path / "turns.jsonl").stat().st_mode & 0o777
+        assert mode == 0o600
