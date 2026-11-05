@@ -29,7 +29,7 @@ from typing import Any
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-RESULTS = HERE / "results"
+RESULTS = Path(os.environ.get("APP_EVAL_RESULTS", HERE / "results"))
 PORT = 8795
 TIMEOUT = 30 * 60
 PROMPT = (
@@ -42,7 +42,7 @@ PI_ENV = {
     "THETARELAY_LITE_BASE_URL": "https://openrouter.ai/api",
     "THETARELAY_LITE_MODEL": "qwen/qwen3.6-35b-a3b",
     "THETARELAY_LITE_API_KEY": os.environ.get("OPENROUTER_API_KEY", ""),
-    "THETARELAY_EASY_THRESHOLD": "0.8",
+    "THETARELAY_EASY_THRESHOLD": os.environ.get("THETARELAY_EASY_THRESHOLD", "0.8"),
     "THETARELAY_STAY_REQUESTS": "1",
     "THETARELAY_HEADROOM_MIDDLEWARE": "true",
 }
