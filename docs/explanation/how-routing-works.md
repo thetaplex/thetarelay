@@ -4,7 +4,7 @@ ThetaRelay sends each request of a coding agent to one of two tiers:
 
 | Tier | Default model | Served by |
 |---|---|---|
-| Lite (easy) | `gemma4:e4b` | Ollama on your computer |
+| Lite (easy) | `gemma4:e4b` | Ollama on your computer, or a hosted provider such as OpenRouter |
 | Frontier (hard) | `openai/gpt-6.1-terra` | OpenRouter |
 
 One model writes the full response. ThetaRelay never mixes the output of two models in one

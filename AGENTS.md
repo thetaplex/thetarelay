@@ -1,6 +1,6 @@
 # thetarelay
 
-Open-source routing proxy (PyPI) for coding agents (Pi, OpenCode, Cursor, Claude Code). A local judge model (tev1 on Ollama) sends easy requests to a local model and hard requests to a frontier model on OpenRouter. Part of the ThetaPlex organisation.
+Open-source routing proxy (PyPI) for coding agents (Pi, OpenCode, Cursor, Claude Code). A local judge model (tev1 on Ollama) sends easy requests to a lite model (local on Ollama or hosted) and hard requests to a frontier model on OpenRouter. Part of the ThetaPlex organisation.
 
 ## Stack
 Python 3.13+, uv, hatchling, FastAPI, uvicorn, httpx. Optional extra: `headroom` (`headroom-ai`). Dev tools live in the `dev` dependency group. Apache-2.0.

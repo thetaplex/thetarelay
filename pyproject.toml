@@ -1,7 +1,7 @@
 [project]
 name = "thetarelay"
 version = "0.2.0"
-description = "Routing proxy for coding agents: a local judge sends easy requests to a local model and hard ones to a frontier model"
+description = "Routing proxy for coding agents: a local judge sends easy requests to a lite model (local or hosted) and hard ones to a frontier model"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]

@@ -5,8 +5,8 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 ThetaRelay is a routing proxy for coding agents. For each request, a small local judge model
-decides if the step is easy or hard. Easy steps go to a local model. Hard steps go to a frontier
-model. The agent does not see the difference: each response comes from one model, unchanged.
+decides if the step is easy or hard. Easy steps go to a lite model, local or hosted. Hard steps go
+to a frontier model. The agent does not see the difference: each response comes from one model, unchanged.
 
 ThetaRelay works with agents that use the Anthropic Messages API or the OpenAI Chat Completions
 API, for example Claude Code, OpenCode, Pi, Cursor and Aider.
@@ -14,8 +14,8 @@ API, for example Claude Code, OpenCode, Pi, Cursor and Aider.
 ## Why it exists
 
 Most requests in a coding-agent session are routine: read a file, search, list, run the tests.
-A frontier model is expensive for these steps. ThetaRelay sends them to a free local model and
-keeps the frontier model for debugging, planning and difficult edits.
+A frontier model is expensive for these steps. ThetaRelay sends them to a cheap lite model (free if
+it runs locally) and keeps the frontier model for debugging, planning and difficult edits.
 
 After a tool result that shows a failure (for example a failed test), ThetaRelay keeps the
 conversation on the frontier model for the next requests. ThetaRelay changes only the `model`
@@ -45,7 +45,7 @@ just setup
 
 ## Quickstart
 
-1. Download the judge and the local model:
+1. Download the judge and the default lite model:
 
    ```sh
    ollama pull tev1
