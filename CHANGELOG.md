@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-05
+
 ThetaRelay is now a routing proxy. Speculative drafting is removed.
 
 ### Added
@@ -54,5 +56,6 @@ First alpha release.
 - Deterministic A/B benchmark suite (`thetarelay bench` / `just bench`) and live two-phase zero-swap evaluation runner (`thetarelay eval` / `just eval`) including OpenAI HumanEval functional `pass@1` execution (`thetarelay eval --benchmark humaneval`).
 - Thinking-mode suppression (`reasoning_effort: "none"`) and concise drafting directives for local reasoning models (e.g., `gemma4`, `qwen3`) to prevent thinking-token latency blowups during speculative drafting.
 
-[Unreleased]: https://github.com/thetaplex/thetarelay/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/thetaplex/thetarelay/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/thetaplex/thetarelay/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/thetaplex/thetarelay/releases/tag/v0.1.0
