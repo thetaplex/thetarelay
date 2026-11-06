@@ -34,8 +34,50 @@ _CREDENTIAL_HEADERS = frozenset({"authorization", "x-api-key"})
 _PATHS = {"anthropic": "/v1/messages", "openai": "/v1/chat/completions"}
 
 
+TRIAGE_NOTE = (
+    "[Router note] A smaller, cheaper model ({model}) can take your next "
+    "step instead of you. If it can do the next step correctly, reply with exactly <EASY/> and "
+    "nothing else. Otherwise ignore this note and continue as you normally would."
+)
+_EASY = "<EASY/>"
+
+
+def _with_triage_note(cfg: RouterConfig, body: dict[str, Any], provider: str) -> list[Any]:
+    """The messages plus the triage note at the end.
+
+    The note changes on every request, so the cache entry must end before it: a top-level
+    marker would land on the note and the next request could not reuse it. Without client
+    markers, the last real message gets one (a plain string becomes one text block). OpenAI
+    models need it too: without it, GPT-6.1 Terra reused only the system prompt.
+    """
+    msgs = list(body.get("messages") or [])
+    note = TRIAGE_NOTE.format(model=cfg.lite_model)
+    if not msgs:
+        return [{"role": "user", "content": note}]
+    last = msgs[-1]
+    blocks = (
+        [{"type": "text", "text": last["content"]}]
+        if isinstance(last.get("content"), str)
+        else list(last.get("content") or [])
+    )
+    if blocks and b"cache_control" not in json.dumps(body).encode():
+        blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+        msgs[-1] = last = {**last, "content": blocks}
+    if provider == "anthropic" and last.get("role") == "user":
+        # Anthropic wants alternating roles: the note is one more block of the last user turn.
+        msgs[-1] = {**last, "content": [*blocks, {"type": "text", "text": note}]}
+    else:
+        msgs.append({"role": "user", "content": note})
+    return msgs
+
+
 def _outbound(
-    cfg: RouterConfig, body: dict[str, Any], headers: dict[str, str], tier: str, provider: str
+    cfg: RouterConfig,
+    body: dict[str, Any],
+    headers: dict[str, str],
+    tier: str,
+    provider: str,
+    triage: bool = False,
 ) -> tuple[str, dict[str, Any], dict[str, str]]:
     """Build the upstream URL, body and headers for the chosen tier.
 
@@ -58,7 +100,9 @@ def _outbound(
             hdrs["authorization"] = f"Bearer {cfg.lite_api_key}"
         return cfg.lite_base_url + _PATHS[provider], out, hdrs
     out["model"] = cfg.frontier_model
-    if (
+    if triage:
+        out["messages"] = _with_triage_note(cfg, body, provider)
+    elif (
         provider == "openai"
         and cfg.frontier_model.startswith("anthropic/")
         and b"cache_control" not in json.dumps(body).encode()
@@ -95,6 +139,128 @@ def _has_tool_call(raw: bytes) -> bool:
     """True if a buffered OpenAI or Anthropic reply (JSON or SSE) contains a tool call."""
     flat = raw.replace(b" ", b"")
     return b'"finish_reason":"tool_calls"' in flat or b'"stop_reason":"tool_use"' in flat
+
+
+def _text_verdict(text: str) -> bool | None:
+    """True: the reply is <EASY/>. False: it is not. None: too short to tell."""
+    t = text.lstrip()
+    if len(t) >= len(_EASY):
+        return t.startswith(_EASY)
+    return None if _EASY.startswith(t) else False
+
+
+def _reply_is_easy(provider: str, data: dict[str, Any]) -> bool:
+    if provider == "openai":
+        msg = ((data.get("choices") or [{}])[0] or {}).get("message") or {}
+        return not msg.get("tool_calls") and bool(_text_verdict(msg.get("content") or ""))
+    blocks = [b for b in data.get("content") or [] if b.get("type") in ("text", "tool_use")]
+    return bool(blocks) and blocks[0]["type"] == "text" and bool(_text_verdict(blocks[0]["text"]))
+
+
+class TriageSniffer:
+    """Reads the start of a frontier SSE stream until it shows whether the reply is <EASY/>.
+
+    Reasoning and thinking deltas do not count; the first text or tool call decides.
+    """
+
+    def __init__(self, provider: str) -> None:
+        self.provider = provider
+        self.text = ""
+        self.verdict: bool | None = None
+        self._partial = b""
+
+    def feed(self, chunk: bytes) -> None:
+        lines = (self._partial + chunk).split(b"\n")
+        self._partial = lines.pop()
+        for line in lines:
+            if self.verdict is not None:
+                return
+            if not line.startswith(b"data:"):
+                continue
+            try:
+                obj = json.loads(line[5:])
+            except ValueError:
+                continue
+            if isinstance(obj, dict):
+                self._event(obj)
+
+    def _event(self, obj: dict[str, Any]) -> None:
+        if self.provider == "openai":
+            choice = (obj.get("choices") or [{}])[0] or {}
+            delta = choice.get("delta") or {}
+            if delta.get("tool_calls"):
+                self.verdict = False
+                return
+            self.text += delta.get("content") or ""
+            done = bool(choice.get("finish_reason"))
+        else:
+            kind = obj.get("type")
+            if kind == "content_block_start" and obj["content_block"].get("type") == "tool_use":
+                self.verdict = False
+                return
+            delta = obj.get("delta") or {}
+            if kind == "content_block_delta" and delta.get("type") == "text_delta":
+                self.text += delta.get("text", "")
+            done = kind in ("message_delta", "message_stop")
+        verdict = _text_verdict(self.text) if self.text else None
+        self.verdict = verdict if verdict is not None or not done else False
+
+    def finish(self) -> None:
+        if self.verdict is None:
+            self.verdict = bool(_text_verdict(self.text))
+
+
+class _Replay(httpx.AsyncByteStream):
+    """The bytes already read, then the rest of the upstream stream."""
+
+    def __init__(self, head: list[bytes], rest: AsyncIterator[bytes], upstream: httpx.Response):
+        self.head, self.rest, self.upstream = head, rest, upstream
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self.head:
+            yield chunk
+        async for chunk in self.rest:
+            yield chunk
+
+    async def aclose(self) -> None:
+        await self.upstream.aclose()
+
+
+async def _triage(
+    upstream: httpx.Response, provider: str, stream: bool
+) -> tuple[bool, httpx.Response, dict[str, Any]]:
+    """Whether the frontier reply is <EASY/>. If not, a response that replays it whole.
+
+    An <EASY/> reply is read to the end, for its usage (it is only a few tokens).
+    """
+    if upstream.status_code != 200:
+        return False, upstream, {}
+    if not stream:
+        raw = await upstream.aread()
+        await upstream.aclose()
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            data = {}
+        if isinstance(data, dict) and _reply_is_easy(provider, data):
+            return True, upstream, _usage(provider, data)
+        replay = httpx.Response(200, headers=upstream.headers, stream=httpx.ByteStream(raw))
+        return False, replay, {}
+    sniffer, usage, head = TriageSniffer(provider), StreamUsage(), []
+    chunks = upstream.aiter_bytes()
+    async for chunk in chunks:
+        head.append(chunk)
+        sniffer.feed(chunk)
+        usage.feed(chunk)
+        if sniffer.verdict is False:
+            stream_ = _Replay(head, chunks, upstream)
+            return False, httpx.Response(200, headers=upstream.headers, stream=stream_), {}
+    await upstream.aclose()
+    sniffer.finish()
+    if sniffer.verdict:
+        return True, upstream, _usage(provider, {"usage": usage.usage})
+    done = httpx.Response(200, headers=upstream.headers, stream=httpx.ByteStream(b"".join(head)))
+    return False, done, {}
 
 
 class StreamUsage:
@@ -184,6 +350,15 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             "Binding to %s with a configured API key exposes upstream credentials to the network.",
             cfg.host,
         )
+    if not cfg.lite_api_key and not cfg.lite_base_url.startswith(
+        ("http://127.0.0.1", "http://localhost", "http://[::1]")
+    ):
+        # The client's key never goes to the lite tier, so a hosted lite model needs its own.
+        logger.warning(
+            "The lite tier %s is hosted, but THETARELAY_LITE_API_KEY is empty: lite requests "
+            "will fail and fall back to the frontier tier.",
+            cfg.lite_base_url,
+        )
     if cfg.enable_headroom_middleware:
         try:
             from headroom.integrations.asgi import CompressionMiddleware
@@ -235,7 +410,6 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             "judge_ms": decision.judge_ms,
             "judge_error": decision.judge_error,
             "judge_state": decision.judge_state,
-            "tests_passed": decision.tests_passed,
         }
         route_headers = {
             "x-thetarelay-tier": decision.tier,
@@ -270,22 +444,36 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                 headers=route_headers,
             )
 
+        triaged: httpx.Response | None = None
+        if decision.triage:
+            url, out_body, hdrs = _outbound(cfg, body, in_headers, "frontier", provider, True)
+            try:
+                easy, triaged, triage_usage = await _triage(
+                    await send(url, out_body, hdrs), provider, record["stream"]
+                )
+            except httpx.TransportError as exc:
+                return _bad_gateway(exc)
+            if easy:
+                # The frontier model hands the step over; the lite tier gets the original body.
+                triaged = None
+                record["triage_cost_usd"] = triage_usage.get("cost_usd")
+                decision.tier = "lite"
+                url, out_body, hdrs = _outbound(cfg, body, in_headers, "lite", provider)
+                record.update(tier="lite", model=out_body["model"])
+                route_headers.update(
+                    {"x-thetarelay-tier": "lite", "x-thetarelay-model": out_body["model"]}
+                )
+
         # Forced-lite mode (evaluation baseline) must not fall back to the frontier.
         can_fall_back = decision.tier == "lite" and cfg.route_mode != "lite"
         escalation = ""
         try:
-            upstream = await send(url, out_body, hdrs)
+            upstream = triaged or await send(url, out_body, hdrs)
             if can_fall_back and upstream.status_code >= 500:
                 escalation = "lite_failed"
                 await upstream.aclose()
-            elif (
-                can_fall_back
-                and cfg.escalate_on_stop
-                and not decision.tests_passed
-                and upstream.status_code == 200
-            ):
+            elif can_fall_back and cfg.escalate_on_stop and upstream.status_code == 200:
                 # Buffer the lite reply; replay it only if it continues the agent loop.
-                # After passing tests, a lite reply that ends the turn is kept as is.
                 raw = await upstream.aread()
                 await upstream.aclose()
                 if _has_tool_call(raw):

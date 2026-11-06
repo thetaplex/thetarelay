@@ -6,8 +6,9 @@
 Arms:
   claude  Claude Code (Opus 5.5) + Headroom proxy (ANTHROPIC_BASE_URL from your settings) + RTK
           hook, with your normal Claude Code configuration.
-  pi      Pi + RTK extension -> ThetaRelay (Headroom middleware on) -> Qwen 3.6 35B (lite,
-          OpenRouter) or Opus 5.5 (frontier, OpenRouter). Clean Pi config, no skills.
+  pi      Pi + RTK extension -> ThetaRelay (Headroom middleware on) -> Haiku 5.5 (lite) or
+          Opus 5.5 (frontier), both on OpenRouter. Clean Pi config, no skills. Override with
+          THETARELAY_FRONTIER_MODEL, THETARELAY_LITE_MODEL, THETARELAY_ROUTE_MODE and so on.
 
 Each build starts from a copy of starter/ in a fresh directory. Afterwards the hidden tests are
 copied in and run. Builds, raw agent output and turn logs are kept in results/.
@@ -38,12 +39,18 @@ PROMPT = (
     "until the application is complete; do not ask questions."
 )
 PI_ENV = {
-    "THETARELAY_FRONTIER_MODEL": "anthropic/claude-opus-5.5",
-    "THETARELAY_LITE_BASE_URL": "https://openrouter.ai/api",
-    "THETARELAY_LITE_MODEL": "qwen/qwen3.6-35b-a3b",
-    "THETARELAY_LITE_API_KEY": os.environ.get("OPENROUTER_API_KEY", ""),
-    "THETARELAY_EASY_THRESHOLD": os.environ.get("THETARELAY_EASY_THRESHOLD", "0.8"),
-    "THETARELAY_STAY_REQUESTS": "1",
+    "THETARELAY_FRONTIER_MODEL": os.environ.get(
+        "THETARELAY_FRONTIER_MODEL", "anthropic/claude-opus-5.5"
+    ),
+    "THETARELAY_LITE_BASE_URL": os.environ.get(
+        "THETARELAY_LITE_BASE_URL", "https://openrouter.ai/api"
+    ),
+    "THETARELAY_LITE_MODEL": os.environ.get("THETARELAY_LITE_MODEL", "anthropic/claude-haiku-5.5"),
+    "THETARELAY_LITE_API_KEY": os.environ.get(
+        "THETARELAY_LITE_API_KEY", os.environ.get("OPENROUTER_API_KEY", "")
+    ),
+    "THETARELAY_EASY_THRESHOLD": os.environ.get("THETARELAY_EASY_THRESHOLD", "0.7"),
+    "THETARELAY_STAY_REQUESTS": os.environ.get("THETARELAY_STAY_REQUESTS", "0"),
     "THETARELAY_HEADROOM_MIDDLEWARE": "true",
 }
 
@@ -166,6 +173,7 @@ def run_pi(work: Path, out: Path) -> dict[str, Any]:
                 PROMPT,
             ],
             cwd=work,
+            stdin=subprocess.DEVNULL,  # `pi -p` waits for stdin to close
             env={**os.environ, "PI_CODING_AGENT_DIR": str(agent), "PI_OFFLINE": "1"},
             capture_output=True,
             text=True,
@@ -194,7 +202,11 @@ def run_pi(work: Path, out: Path) -> dict[str, Any]:
             "output": sum(r.get("output_tokens") or 0 for r in t),
             "cost_usd": round(sum(r.get("cost_usd") or 0 for r in t), 4),
         }
-    rec["api_cost_usd"] = round(rec["frontier"]["cost_usd"] + rec["lite"]["cost_usd"], 4)
+    # Triage mode: the frontier call that answered <EASY/> before a lite request.
+    rec["triage_cost_usd"] = round(sum(r.get("triage_cost_usd") or 0 for r in rows), 4)
+    rec["api_cost_usd"] = round(
+        rec["frontier"]["cost_usd"] + rec["lite"]["cost_usd"] + rec["triage_cost_usd"], 4
+    )
     return rec
 
 

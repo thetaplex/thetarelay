@@ -47,9 +47,11 @@ class RouterConfig:
 
     # Easy tier: a server with the Anthropic Messages and OpenAI Chat Completions APIs (Ollama).
     # Base URL without `/v1`.
-    lite_base_url: str = "http://127.0.0.1:11434"
-    lite_model: str = "gemma4:e4b"
-    # Empty: send no credentials (a local server). Set it for a hosted lite model.
+    # Defaults: the only setup measured to cut cost (Opus 5.5 + Haiku 5.5 on OpenRouter, hybrid,
+    # threshold 0.7, stay 0). Other models are untested; see docs/reference/tested-models.md.
+    lite_base_url: str = "https://openrouter.ai/api"
+    lite_model: str = "anthropic/claude-haiku-5.5"
+    # Empty: send no credentials (a local server). A hosted lite model needs it.
     lite_api_key: str = ""
     lite_disable_thinking: bool = True
     # Requests larger than this (characters of system + messages + tools) go to the frontier
@@ -61,7 +63,7 @@ class RouterConfig:
 
     # Hard tier: a server with both APIs (OpenRouter). Base URL without `/v1`.
     frontier_base_url: str = "https://openrouter.ai/api"
-    frontier_model: str = "openai/gpt-6.1-terra"
+    frontier_model: str = "anthropic/claude-opus-5.5"
     # Empty: forward the client's own credentials unchanged.
     frontier_api_key: str = ""
 
@@ -74,11 +76,15 @@ class RouterConfig:
     # Route to the lite tier only when the judge gives P(easy) above this value.
     easy_threshold: float = 0.7
     # After a failed tool result, keep this many requests of the conversation on the frontier.
-    stay_requests: int = 6
-    # `judge` (default); `random`: the same rules, but a coin with P(lite) = random_lite_share
-    # replaces the judge; `lite` / `frontier`: every request to one tier, no fallback.
-    # `random`, `lite` and `frontier` are evaluation baselines.
-    route_mode: str = "judge"
+    stay_requests: int = 0
+    # `hybrid` (default) or `judge` (the judge alone); `random`: the same rules, but a coin with
+    # P(lite) = random_lite_share replaces the judge; `lite` / `frontier`: every request to one
+    # tier, no fallback.
+    # `random`, `lite` and `frontier` are evaluation baselines. `triage`: no judge; the frontier
+    # model gets each request with a short note and either does the step or answers `<EASY/>`,
+    # and then the request goes to the lite tier. `hybrid`: the judge first; if P(easy) is not
+    # above the threshold, the frontier model triages instead of a plain frontier request.
+    route_mode: str = "hybrid"
     random_lite_share: float = 0.5
     # A lite reply without a tool call ends the agent's turn. Such replies are discarded and
     # the request goes to the frontier tier: the lite model takes tool steps, the frontier
@@ -92,9 +98,10 @@ class RouterConfig:
     def __post_init__(self) -> None:
         if not 0.0 <= self.easy_threshold <= 1.0:
             raise ValueError(f"easy_threshold must be between 0 and 1, got {self.easy_threshold}")
-        if self.route_mode not in ("judge", "random", "lite", "frontier"):
+        if self.route_mode not in ("judge", "triage", "hybrid", "random", "lite", "frontier"):
             raise ValueError(
-                f"route_mode must be judge, random, lite or frontier, got {self.route_mode!r}"
+                "route_mode must be judge, triage, hybrid, random, lite or frontier, "
+                f"got {self.route_mode!r}"
             )
         if not 0.0 <= self.random_lite_share <= 1.0:
             raise ValueError(

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- New defaults: frontier `anthropic/claude-opus-5.5`, lite `anthropic/claude-haiku-5.5` on OpenRouter, `hybrid` routing, `THETARELAY_STAY_REQUESTS=0`. This is the only setup tested to reduce cost; see [Tested models](docs/reference/tested-models.md). Set `THETARELAY_LITE_API_KEY` for the hosted lite model.
+- A lite reply that ends the agent's turn always goes to the frontier tier, also after passing tests. The turn log no longer has `tests_passed`.
+
+### Added
+
+- `THETARELAY_ROUTE_MODE=hybrid` (default): the judge sends easy steps to the lite tier; for the other steps, the frontier model either does the step or hands it to the lite tier.
+- `THETARELAY_ROUTE_MODE=triage`: as `hybrid`, without the judge.
+- Turn log field `triage_cost_usd`: the cost of a frontier call that handed the step to the lite tier.
+
 ## [0.2.0] - 2026-11-05
 
 ThetaRelay is now a routing proxy. Speculative drafting is removed.

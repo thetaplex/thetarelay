@@ -1,9 +1,10 @@
 # Known limitations
 
-This list applies to version 0.2.0. Last examined: 2026-11-03.
+This list applies to version 0.3.0 (unreleased). Last examined: 2026-11-06.
 
 | Limitation | Effect |
 |---|---|
+| Cost savings are tested only with Claude Opus 5.5 and Claude Haiku 5.5. | With other models, routing can cost more than no routing. See [Tested models](tested-models.md). |
 | The judge accuracy is measured only on 59 hand-written steps. | On real agent sessions, it can send hard steps to the lite model. Examine the turn log before you rely on it. |
 | ThetaRelay does not check the quality of lite tool calls. | If the lite model writes a wrong tool call or wrong code, the agent receives it. A failed tool result then moves the conversation to the frontier tier. |
 | The failure detection uses text patterns. | Failures without words such as `FAILED`, `error:` or `Traceback` are not detected. |

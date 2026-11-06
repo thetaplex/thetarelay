@@ -40,6 +40,5 @@ contains prompt text, so keep it private. It never contains request headers or A
 | `tier`, `model`, `reason` | The decision. Same values as the headers. |
 | `p_easy`, `threshold`, `judge_ms`, `judge_error` | The judge's answer, the threshold, the judge time and the judge error |
 | `judge_state` | The summary that the judge read |
-| `tests_passed` | `true` if the trailing tool results included a passing test run |
 | `status`, `upstream_ms` | Status code and time of the model request |
 | `input_tokens`, `cached_tokens`, `output_tokens`, `cost_usd` | Usage from the response (both streamed and non-streamed). `cost_usd` is the cost that OpenRouter reports. |
