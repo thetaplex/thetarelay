@@ -11,10 +11,7 @@ def _env(name: str, default: str) -> str:
 
 
 def _raw(name: str, default: str | int | float) -> str:
-    """Read `name`; for THETARELAY_LITE_*, fall back to the pre-0.2 THETARELAY_LOCAL_* name."""
-    if name in os.environ or not name.startswith("THETARELAY_LITE_"):
-        return str(os.environ.get(name, default))
-    return str(os.environ.get(name.replace("_LITE_", "_LOCAL_", 1), default))
+    return str(os.environ.get(name, default))
 
 
 def _env_bool(name: str, default: bool) -> bool:

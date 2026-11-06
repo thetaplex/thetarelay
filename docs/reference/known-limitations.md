@@ -1,6 +1,6 @@
 # Known limitations
 
-This list applies to version 0.3.0 (unreleased). Last examined: 2026-11-06.
+This list applies to version 0.1.0. Last examined: 2026-11-06.
 
 | Limitation | Effect |
 |---|---|
