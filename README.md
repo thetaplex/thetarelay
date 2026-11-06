@@ -5,8 +5,13 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 ThetaRelay is a routing proxy for coding agents. For each request, a small local judge model
-decides if the step is easy or hard. Easy steps go to a lite model, local or hosted. Hard steps go
-to a frontier model. The agent does not see the difference: each response comes from one model, unchanged.
+decides if the step is easy. Easy steps go to a lite model. For the other steps, the frontier
+model either does the step or hands it to the lite model. The agent does not see the difference:
+each response comes from one model, unchanged.
+
+> **Tested models.** ThetaRelay is tested to reduce cost only with Claude Opus 5.5 (frontier)
+> and Claude Haiku 5.5 (lite), the defaults. With other models it can cost more than no routing.
+> See [Tested models](docs/reference/tested-models.md).
 
 ThetaRelay works with agents that use the Anthropic Messages API or the OpenAI Chat Completions
 API, for example Claude Code, OpenCode, Pi, Cursor and Aider.
@@ -14,12 +19,12 @@ API, for example Claude Code, OpenCode, Pi, Cursor and Aider.
 ## Why it exists
 
 Most requests in a coding-agent session are routine: read a file, search, list, run the tests.
-A frontier model is expensive for these steps. ThetaRelay sends them to a cheap lite model (free if
-it runs locally) and keeps the frontier model for debugging, planning and difficult edits.
+A frontier model is expensive for these steps. ThetaRelay sends them to a cheap lite model and
+keeps the frontier model for debugging, planning and difficult edits. The frontier model also
+decides when the work is done.
 
-After a tool result that shows a failure (for example a failed test), ThetaRelay keeps the
-conversation on the frontier model for the next requests. ThetaRelay changes only the `model`
-field of a request, so the provider prompt cache of the frontier model continues to work.
+ThetaRelay keeps the provider prompt cache of the frontier model working: it changes only the
+`model` field, plus a short note at the end of requests that the frontier model triages.
 
 ## Install
 
@@ -28,8 +33,8 @@ Prerequisites:
 - Python 3.13 or later
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - [just](https://just.systems/man/en/packages.html), for a source checkout
-- [Ollama](https://ollama.com/download) 0.35 or later (decision-model API)
-- An [OpenRouter](https://openrouter.ai) API key for the frontier model
+- [Ollama](https://ollama.com/download) 0.35 or later, for the judge
+- An [OpenRouter](https://openrouter.ai) API key, for the frontier and lite models
 
 ```sh
 uv tool install thetarelay
@@ -45,17 +50,17 @@ just setup
 
 ## Quickstart
 
-1. Download the judge and the default lite model:
+1. Download the judge:
 
    ```sh
    ollama pull tev1
-   ollama pull gemma4:e4b
    ```
 
-2. Start the proxy:
+2. Start the proxy. Both tiers use your OpenRouter key:
 
    ```sh
    export OPENROUTER_API_KEY=sk-or-...
+   export THETARELAY_LITE_API_KEY=$OPENROUTER_API_KEY
    thetarelay proxy --debug
    ```
 
@@ -68,8 +73,8 @@ just setup
 With `--debug`, ThetaRelay prints one line for each request:
 
 ```text
-[thetarelay] conv 33723461a51d msg 1  P(easy)=0.99  judge → lite (gemma4:e4b)  status 200  4689 ms
-[thetarelay] conv 1af65bd07298 msg 1  P(easy)=0.21  judge → frontier (openai/gpt-6.1-terra)  status 200  2884 ms
+[thetarelay] conv 33723461a51d msg 1  P(easy)=0.99  judge → lite (anthropic/claude-haiku-5.5)  status 200  1689 ms
+[thetarelay] conv 1af65bd07298 msg 7  P(easy)=0.41  judge; triage → frontier (anthropic/claude-opus-5.5)  status 200  21734 ms
 ```
 
 ## Usage
@@ -89,6 +94,7 @@ In a source checkout, use `just run` in place of `thetarelay`, for example `just
 - [How routing works](docs/explanation/how-routing-works.md)
 - [Connect a coding agent](docs/how-to/connect-coding-agents.md)
 - [Reference: CLI, configuration, HTTP API](docs/README.md#reference)
+- [Tested models](docs/reference/tested-models.md)
 - [Known limitations](docs/reference/known-limitations.md)
 
 ## Links

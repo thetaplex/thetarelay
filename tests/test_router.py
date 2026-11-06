@@ -13,10 +13,7 @@ import pytest
 from thetarelay.config import RouterConfig
 from thetarelay.proxy import StreamUsage, create_app
 from thetarelay.router import (
-    _FAILURE,
-    Event,
     events,
-    passed_tests_just_ran,
     requests_since_failure,
     summarize,
 )
@@ -78,7 +75,7 @@ def _app(
         frontier_api_key="sk-frontier",
         enable_headroom_middleware=False,
         turn_log_path=str(tmp_path / "turns.jsonl"),
-        **{"escalate_on_stop": False, **overrides},
+        **{"escalate_on_stop": False, "route_mode": "judge", "stay_requests": 6, **overrides},
     )
     app = create_app(cfg)
     calls: list[tuple[str, dict[str, Any], dict[str, str]]] = []
@@ -119,7 +116,7 @@ async def test_easy_request_goes_local_without_cloud_credentials(tmp_path: Path)
     assert resp.headers["x-thetarelay-tier"] == "lite"
     url, body, headers = calls[-1]
     assert url == "http://local.test/v1/messages"
-    assert body["model"] == "gemma4:e4b"
+    assert body["model"] == "anthropic/claude-haiku-5.5"
     assert body["thinking"] == {"type": "disabled"}
     assert "x-api-key" not in headers
     assert "authorization" not in headers
@@ -133,7 +130,7 @@ async def test_hard_request_goes_to_frontier_with_its_key(tmp_path: Path) -> Non
     assert resp.headers["x-thetarelay-tier"] == "frontier"
     url, body, headers = calls[-1]
     assert url == "http://frontier.test/api/v1/messages"
-    assert body["model"] == "openai/gpt-6.1-terra"
+    assert body["model"] == "anthropic/claude-opus-5.5"
     assert headers["authorization"] == "Bearer sk-frontier"
     assert "x-api-key" not in headers
     assert {k: v for k, v in body.items() if k != "model"} == {
@@ -318,21 +315,10 @@ async def test_local_reply_without_tool_call_is_escalated(tmp_path: Path) -> Non
     assert resp.content == b"data: frontier\n\n"
 
 
-def test_passed_tests_detection__only_clean_passing_runs() -> None:
-    def ev(*results: str) -> list[Event]:
-        return [Event("user", "fix it"), Event("call", "bash pytest")] + [
-            Event("result", r, bool(_FAILURE.search(r))) for r in results
-        ]
-
-    assert passed_tests_just_ran(ev("Successfully wrote to a.py", "17 passed in 0.01s"))
-    assert passed_tests_just_ran(ev("Ran 4 tests in 0.001s\n\nOK"))
-    assert not passed_tests_just_ran(ev("1 failed, 16 passed in 0.02s"))
-    assert not passed_tests_just_ran(ev("ls output: a.py b.py"))
-    assert not passed_tests_just_ran([*ev("17 passed"), Event("assistant", "done")])
-
-
 @pytest.mark.asyncio
-async def test_local_finish_after_passing_tests_is_kept(tmp_path: Path) -> None:
+async def test_local_finish_after_passing_tests_goes_to_frontier(tmp_path: Path) -> None:
+    # The frontier model decides when the work is done, even after green tests: its final
+    # review found real bugs (integer overflow) that a lite finish skipped.
     app, _ = _app(tmp_path, 0.9, escalate_on_stop=True)
     text = b'data: {"choices":[{"delta":{"content":"All tests pass."},"finish_reason":"stop"}]}\n\n'
 
@@ -363,9 +349,8 @@ async def test_local_finish_after_passing_tests_is_kept(tmp_path: Path) -> None:
         ]
     }
     resp = await _post(app, {"model": "claude-x", "max_tokens": 10, "stream": True, **passed})
-    assert (resp.headers["x-thetarelay-tier"], resp.content) == ("lite", text)
-    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
-    assert line["tests_passed"] is True
+    assert resp.headers["x-thetarelay-reason"] == "judge; lite_stopped"
+    assert resp.content == b"data: frontier\n\n"
 
 
 @pytest.mark.asyncio
@@ -440,7 +425,7 @@ async def test_openai_requests_to_anthropic_frontier_get_a_cache_marker(tmp_path
     }
     await post_oai(app, marked)
     assert "cache_control" not in calls[-1][1]
-    app, calls = _app(tmp_path, 0.1)
+    app, calls = _app(tmp_path, 0.1, frontier_model="openai/gpt-6.1-terra")
     await post_oai(app, oai)
     assert "cache_control" not in calls[-1][1]
 
@@ -474,3 +459,221 @@ async def test_turn_log_has_owner_only_permissions_and_non_loopback_warns(
     if sys.platform != "win32":  # Windows has no POSIX permission bits
         mode = (tmp_path / "turns.jsonl").stat().st_mode & 0o777
         assert mode == 0o600
+
+
+# Frontier self-triage: the frontier model either does the step or answers <EASY/>.
+
+TOOL_RUN = {
+    "model": "auto",
+    "messages": [
+        {"role": "system", "content": "You are a coding agent."},
+        {"role": "user", "content": "Build SPEC.md"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "c1", "function": {"name": "bash", "arguments": "ls"}}],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "app tests"},
+    ],
+}
+OAI_EASY = {"choices": [{"message": {"content": "<EASY/>"}}], "usage": {"cost": 0.002}}
+OAI_TOOL = {
+    "choices": [
+        {"message": {"content": None, "tool_calls": [{"id": "c2", "function": {"name": "ls"}}]}}
+    ],
+    "usage": {"cost": 0.05},
+}
+
+
+async def _post_openai(app: Any, body: dict[str, Any]) -> httpx.Response:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://relay"
+    ) as client:
+        return await client.post(
+            "/v1/chat/completions", json=body, headers={"authorization": "Bearer sk-client"}
+        )
+
+
+def _sse(*chunks: dict[str, Any]) -> bytes:
+    return b"".join(b"data: " + json.dumps(c).encode() + b"\n\n" for c in chunks) + (
+        b"data: [DONE]\n\n"
+    )
+
+
+def _triage_app(
+    tmp_path: Path,
+    frontier_reply: bytes,
+    content_type: str = "application/json",
+    frontier_model: str = "anthropic/claude-opus-5.5",
+) -> tuple[Any, list[tuple[str, dict[str, Any], dict[str, str]]]]:
+    app, calls = _app(tmp_path, None, route_mode="triage", frontier_model=frontier_model)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((str(request.url), json.loads(request.content), dict(request.headers)))
+        if "frontier.test" in str(request.url):
+            return httpx.Response(
+                200, content=frontier_reply, headers={"content-type": content_type}
+            )
+        return httpx.Response(200, json={"choices": [{"message": {"content": "lite"}}]})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return app, calls
+
+
+@pytest.mark.asyncio
+async def test_triage_easy_goes_to_lite_with_the_original_body(tmp_path: Path) -> None:
+    app, calls = _triage_app(tmp_path, json.dumps(OAI_EASY).encode())
+    resp = await _post_openai(app, TOOL_RUN)
+    assert resp.headers["x-thetarelay-tier"] == "lite"
+    assert resp.headers["x-thetarelay-reason"] == "triage"
+    assert resp.json()["choices"][0]["message"]["content"] == "lite"
+    (f_url, f_body, _), (l_url, l_body, l_headers) = calls
+    assert "frontier.test" in f_url
+    assert "local.test" in l_url
+    # The note follows the conversation; the cache marker sits on the last real message.
+    assert f_body["messages"][:-2] == TOOL_RUN["messages"][:-1]
+    assert f_body["messages"][-2]["content"] == [
+        {"type": "text", "text": "app tests", "cache_control": {"type": "ephemeral"}}
+    ]
+    assert "<EASY/>" in f_body["messages"][-1]["content"]
+    assert "cache_control" not in f_body  # no top-level marker: it would land on the note
+    assert l_body["messages"] == TOOL_RUN["messages"]  # the lite tier never sees the note
+    assert "authorization" not in l_headers
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[0])
+    assert line["triage_cost_usd"] == 0.002
+
+
+@pytest.mark.asyncio
+async def test_triage_hard_returns_the_frontier_reply(tmp_path: Path) -> None:
+    app, calls = _triage_app(tmp_path, json.dumps(OAI_TOOL).encode())
+    resp = await _post_openai(app, TOOL_RUN)
+    assert resp.headers["x-thetarelay-tier"] == "frontier"
+    assert resp.json() == OAI_TOOL
+    assert len(calls) == 1  # one call, no lite request
+
+
+@pytest.mark.asyncio
+async def test_triage_streams_both_ways(tmp_path: Path) -> None:
+    easy = _sse(
+        {"choices": [{"delta": {"reasoning": "simple"}}]},
+        {"choices": [{"delta": {"content": "<EAS"}}]},
+        {"choices": [{"delta": {"content": "Y/>"}, "finish_reason": "stop"}]},
+        {"choices": [], "usage": {"cost": 0.003}},
+    )
+    app, calls = _triage_app(tmp_path, easy, "text/event-stream")
+    resp = await _post_openai(app, {**TOOL_RUN, "stream": True})
+    assert resp.headers["x-thetarelay-tier"] == "lite"
+    assert "<EASY/>" not in resp.text
+    hard = _sse(
+        {"choices": [{"delta": {"reasoning": "plan"}}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c2"}]}}]},
+    )
+    app, calls = _triage_app(tmp_path, hard, "text/event-stream")
+    resp = await _post_openai(app, {**TOOL_RUN, "stream": True})
+    assert resp.headers["x-thetarelay-tier"] == "frontier"
+    assert resp.content == hard  # replayed byte for byte
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_triage_anthropic_format_keeps_client_cache_markers(tmp_path: Path) -> None:
+    body: dict[str, Any] = {
+        "model": "claude-x",
+        "max_tokens": 10,
+        "messages": [
+            {"role": "user", "content": "Build it"},
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "t1", "name": "ls", "input": {}}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t1",
+                        "content": "ok",
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            },
+        ],
+    }
+    reply = {"content": [{"type": "text", "text": "<EASY/>"}], "usage": {"cost": 0.001}}
+    app, calls = _triage_app(tmp_path, json.dumps(reply).encode())
+    resp = await _post(app, body)
+    assert resp.headers["x-thetarelay-tier"] == "lite"
+    sent = calls[0][1]["messages"]
+    assert sent[:-1] == body["messages"][:-1]
+    # The note is one more block in the last user message; the client's marker is untouched.
+    assert sent[-1]["content"][:-1] == body["messages"][-1]["content"]
+    assert sent[-1]["content"][-1]["type"] == "text"
+    assert "<EASY/>" in sent[-1]["content"][-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_triage_skipped_after_a_failure(tmp_path: Path) -> None:
+    app, calls = _triage_app(tmp_path, json.dumps(OAI_TOOL).encode())
+    resp = await _post(app, {"model": "claude-x", "max_tokens": 10, **ANTH_FAIL})
+    assert resp.headers["x-thetarelay-reason"].startswith("recent_failure")
+    assert calls[0][1]["messages"] == ANTH_FAIL["messages"]  # no note
+
+
+@pytest.mark.asyncio
+async def test_hybrid_confident_judge_goes_lite_else_frontier_triages(tmp_path: Path) -> None:
+    for p_easy, tier, frontier_calls in ((0.9, "lite", 0), (0.5, "lite", 1)):
+        app, calls = _app(tmp_path, p_easy, route_mode="hybrid")
+
+        async def handler(
+            request: httpx.Request, calls: list[Any] = calls, p_easy: float = p_easy
+        ) -> httpx.Response:
+            calls.append((str(request.url), json.loads(request.content), dict(request.headers)))
+            if "judge.test" in str(request.url):
+                probs = {"easy": p_easy, "hard": 1 - p_easy}
+                return httpx.Response(200, json={"answers": {"route": {"probabilities": probs}}})
+            if "frontier.test" in str(request.url):
+                return httpx.Response(200, json=OAI_EASY)
+            return httpx.Response(200, json={"choices": [{"message": {"content": "lite"}}]})
+
+        app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        resp = await _post_openai(app, TOOL_RUN)
+        assert resp.headers["x-thetarelay-tier"] == tier
+        assert sum("frontier.test" in c[0] for c in calls) == frontier_calls
+        assert resp.headers["x-thetarelay-reason"] == ("judge" if p_easy > 0.7 else "judge; triage")
+
+
+def test_defaults_are_the_tested_setup() -> None:
+    # The only setup measured to cut cost: Opus 5.5 + Haiku 5.5, hybrid, threshold 0.7, stay 0.
+    cfg = RouterConfig()
+    assert (cfg.frontier_model, cfg.lite_model) == (
+        "anthropic/claude-opus-5.5",
+        "anthropic/claude-haiku-5.5",
+    )
+    assert cfg.lite_base_url == "https://openrouter.ai/api"
+    assert (cfg.route_mode, cfg.easy_threshold, cfg.stay_requests) == ("hybrid", 0.7, 0)
+
+
+def test_hosted_lite_without_a_key_warns(caplog: pytest.LogCaptureFixture) -> None:
+    create_app(RouterConfig(enable_headroom_middleware=False))
+    assert "THETARELAY_LITE_API_KEY" in caplog.text
+    caplog.clear()
+    create_app(RouterConfig(enable_headroom_middleware=False, lite_api_key="sk-lite"))
+    create_app(
+        RouterConfig(enable_headroom_middleware=False, lite_base_url="http://127.0.0.1:11434")
+    )
+    assert "THETARELAY_LITE_API_KEY" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_triage_marks_the_cache_for_openai_models_too(tmp_path: Path) -> None:
+    # Measured on GPT-6.1 Terra: without the marker the next request reused only the system
+    # prompt; with it, everything before the note.
+    app, calls = _triage_app(
+        tmp_path, json.dumps(OAI_TOOL).encode(), frontier_model="openai/gpt-6.1-terra"
+    )
+    await _post_openai(app, TOOL_RUN)
+    sent = calls[0][1]
+    assert sent["messages"][-2]["content"] == [
+        {"type": "text", "text": "app tests", "cache_control": {"type": "ephemeral"}}
+    ]
+    assert "<EASY/>" in sent["messages"][-1]["content"]

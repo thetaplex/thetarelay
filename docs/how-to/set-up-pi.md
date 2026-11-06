@@ -22,14 +22,13 @@ easy steps to a local model and hard steps to a frontier model on OpenRouter.
 - [Git](https://git-scm.com/)
 - An [OpenRouter](https://openrouter.ai/) account and API key
 
-## 1. Get the local models
+## 1. Get the judge model
 
 1. Start Ollama.
-2. Download the judge model and the local model:
+2. Download the judge model:
 
    ```sh
    ollama pull tev1
-   ollama pull gemma4:e4b
    ```
 
 ## 2. Install the tools
@@ -46,6 +45,7 @@ Do this step in its own terminal, and keep that terminal open while you use Pi.
 
 ```sh
 export OPENROUTER_API_KEY=<your OpenRouter key>
+export THETARELAY_LITE_API_KEY=$OPENROUTER_API_KEY
 THETARELAY_TURN_LOG=~/thetarelay-turns.jsonl thetarelay proxy --debug
 ```
 
@@ -116,9 +116,9 @@ pi --model thetarelay/auto
 ## Make sure that it works
 
 1. Ask Pi a simple question, for example "List the files in this directory".
-2. In the proxy terminal, make sure that you see a line with `→ lite (gemma4:e4b)`.
+2. In the proxy terminal, make sure that you see a line with `→ lite (anthropic/claude-haiku-5.5)`.
 3. Ask Pi for a difficult change, for example a bug fix.
-4. Make sure that you see lines with `→ frontier (openai/gpt-6.1-terra)`.
+4. Make sure that you see lines with `→ frontier (anthropic/claude-opus-5.5)`.
 5. Show the request counts:
 
    ```sh

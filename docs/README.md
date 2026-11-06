@@ -13,6 +13,7 @@ The text follows ASD-STE100 Simplified Technical English. Dates use ISO 8601.
 - [Command-line interface](reference/cli.md)
 - [Configuration (environment variables)](reference/configuration.md)
 - [HTTP API, headers and turn log](reference/http-api.md)
+- [Tested models and measured savings](reference/tested-models.md)
 - [Known limitations](reference/known-limitations.md)
 
 ## Explanation

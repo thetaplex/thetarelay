@@ -4,8 +4,8 @@ ThetaRelay sends each request of a coding agent to one of two tiers:
 
 | Tier | Default model | Served by |
 |---|---|---|
-| Lite (easy) | `gemma4:e4b` | Ollama on your computer, or a hosted provider such as OpenRouter |
-| Frontier (hard) | `openai/gpt-6.1-terra` | OpenRouter |
+| Lite (easy) | `anthropic/claude-haiku-5.5` | Ollama on your computer, or a hosted provider such as OpenRouter |
+| Frontier (hard) | `anthropic/claude-opus-5.5` | OpenRouter |
 
 One model writes the full response. ThetaRelay never mixes the output of two models in one
 response, and it never shows one model's output to another model for approval. Each response
@@ -23,13 +23,20 @@ the tier.
    request goes to the frontier tier. A failure usually means debugging, which is hard.
 3. **Judge.** ThetaRelay asks the judge model one question: can a small, fast model do the next
    step? If the judge gives a probability of "easy" above `THETARELAY_EASY_THRESHOLD`, the
-   request goes to the lite tier. If not, it goes to the frontier tier.
-4. **Errors.** If the judge does not answer, the request goes to the frontier tier. If the lite
+   request goes to the lite tier.
+4. **Triage.** Otherwise the request goes to the frontier model with a short note after the
+   last message: if a smaller model can do the next step correctly, reply only `<EASY/>`. If
+   the frontier model does the step, its reply goes to the agent unchanged, with no extra call.
+   If it answers `<EASY/>`, ThetaRelay drops that answer and sends the original request, without
+   the note, to the lite tier. With `THETARELAY_ROUTE_MODE=judge`, this rule is off and the
+   request goes to the frontier tier.
+5. **Errors.** If the judge does not answer, the request goes to the frontier tier. If the lite
    server does not answer or returns a 5xx status, ThetaRelay sends the same request to the
    frontier tier.
-5. **Stopping.** If `THETARELAY_ESCALATE_ON_STOP` is `true` (the default) and the lite response
+6. **Stopping.** If `THETARELAY_ESCALATE_ON_STOP` is `true` (the default) and the lite response
    contains no tool call (so it would end the agent's turn), ThetaRelay discards it and sends the
-   request to the frontier tier, unless the trailing tool results show a passing test run.
+   request to the frontier tier. This holds after a passing test run too: the frontier model
+   decides when the work is done.
 
 A wrong decision has two different costs. An easy step sent to the frontier tier costs money
 only. A hard step sent to the lite tier can cost quality. For this reason every uncertain case
@@ -52,7 +59,8 @@ requests, and a restart does not change any decision.
 ## Prompt cache
 
 ThetaRelay changes only the `model` field of a request. For the lite tier, it also turns off
-thinking. The system prompt, the messages and the tools do not change. So the frontier
+thinking. A triage request also has the note after the last message; if the client set no cache
+marker, the last real message gets one, so the cached prefix ends before the note. The system prompt, the messages and the tools do not change. So the frontier
 provider sees the same prefix on each request, and its prompt cache continues to work. Requests
 that go to the lite tier add messages after that prefix. The next frontier request still
 matches the cached prefix, if the cache has not expired.
