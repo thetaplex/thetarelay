@@ -386,15 +386,6 @@ async def test_hosted_lite_model_gets_its_own_key_not_the_clients(tmp_path: Path
     assert "x-api-key" not in headers  # the client's key never goes to the lite tier
 
 
-def test_old_local_env_names_still_work(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("THETARELAY_LOCAL_MODEL", "old-name")
-    monkeypatch.setenv("THETARELAY_LOCAL_TIMEOUT", "12")
-    assert RouterConfig.from_env().lite_model == "old-name"
-    assert RouterConfig.from_env().lite_timeout_seconds == 12.0
-    monkeypatch.setenv("THETARELAY_LITE_MODEL", "new-name")
-    assert RouterConfig.from_env().lite_model == "new-name"  # the new name wins
-
-
 @pytest.mark.asyncio
 async def test_openai_requests_to_anthropic_frontier_get_a_cache_marker(tmp_path: Path) -> None:
     oai = {"model": "x", "messages": [{"role": "user", "content": "explain"}]}

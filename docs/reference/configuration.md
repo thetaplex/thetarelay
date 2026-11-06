@@ -15,8 +15,7 @@ ThetaRelay reads its configuration from environment variables when it starts.
 ## Lite tier
 
 The lite tier takes the easy requests. It can be a local server (Ollama) or a hosted one
-(OpenRouter). The pre-0.2 names `THETARELAY_LOCAL_*` still work; the `THETARELAY_LITE_*` name wins
-if both are set.
+(OpenRouter).
 
 | Variable | Default | Description |
 |---|---|---|
