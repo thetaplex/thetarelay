@@ -1,10 +1,11 @@
 """Add the unique tool calls of captured agent sessions to the labelled step dataset.
 
-Usage: uv run python scripts/step_eval/extract.py AGENT BODIES.jsonl [BODIES.jsonl ...]
+Usage: uv run python scripts/step_eval/extract.py AGENT FILE.jsonl [FILE.jsonl ...]
 
 Reads request bodies (one JSON object per line, as written by the app and routing evaluations)
-and appends each tool call not yet in calls.jsonl with an empty label, for review. Existing
-lines and labels are kept. Arguments of non-shell tools are cut to their first 80 characters per
+or Claude Code session transcripts (~/.claude/projects/*/<session>.jsonl), and appends each
+tool call not yet in calls.jsonl with an empty label, for review. Existing lines and labels are
+kept. Arguments of non-shell tools are cut to their first 80 characters per
 value: their group depends only on the tool name, and file contents do not belong in the dataset.
 """
 
@@ -53,6 +54,8 @@ def main(agent: str, paths: list[str]) -> None:
                     body = json.loads(line)
                 except ValueError:
                     continue
+                if isinstance(body.get("message"), dict):  # Claude Code transcript line
+                    body = {"messages": [body["message"]]}
                 body = body.get("body", body)
                 for tool, args in calls_in(body):
                     key = (tool, json.dumps(shorten(tool, args), ensure_ascii=False))

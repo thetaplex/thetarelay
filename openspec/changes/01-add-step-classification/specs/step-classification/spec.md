@@ -199,12 +199,18 @@ or local git state: at least `mv`, `cp`, `rm`, `mkdir`, `touch`, `sed -i`, `git 
 
 ### Requirement: Wrapper commands
 
-The system SHALL classify `timeout [options] DURATION command …` by the wrapped command.
+The system SHALL classify `timeout [options] DURATION command …`, `rtk proxy command …` and
+`rtk command …` (the RTK output filter) by the wrapped command.
 
 #### Scenario: Timeout around a test run
 
 - **WHEN** a shell command is `timeout 5 uv run pytest -x`
 - **THEN** it is classified `run`
+
+#### Scenario: Output filter around a read
+
+- **WHEN** a shell command is `rtk proxy sed -n '35,56p' SPEC.md | base64`
+- **THEN** it is classified `read`
 
 #### Scenario: Timeout around a push
 

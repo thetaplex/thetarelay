@@ -97,6 +97,9 @@ CASES: list[tuple[str, str, str, str]] = [
     ("uv version", *bash("uv --version && uv pip list"), "read"),
     ("timeout wrapper", *bash("timeout 5 uv run pytest -x"), "run"),
     ("timeout wrapping push", *bash("timeout -s KILL 60 git push"), "irreversible"),
+    ("rtk proxy", *bash("rtk proxy sed -n '35,56p' SPEC.md | base64"), "read"),
+    ("rtk command", *bash("rtk git status"), "read"),
+    ("rtk wrapping push", *bash("rtk proxy git push"), "irreversible"),
     # Everything else is irreversible
     ("push", *bash("git push origin main"), "irreversible"),
     ("curl", *bash("curl -s https://example.com"), "irreversible"),

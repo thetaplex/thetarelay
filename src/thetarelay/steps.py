@@ -27,6 +27,7 @@ _READ_PROGRAMS = frozenset(
     {"cat", "head", "tail", "ls", "pwd", "cd", "echo", "printf", "true", "grep", "egrep"}
     | {"fgrep", "rg", "tree", "file", "stat", "wc", "which", "diff", "sort", "uniq", "jq"}
     | {"nl", "cut", "tr", "du", "basename", "dirname", "realpath", "date", "sed", "awk", "find"}
+    | {"base64", "sleep"}
 )
 _GIT_READ = frozenset({"status", "diff", "log", "show", "blame", "grep", "ls-files", "rev-parse"})
 _GIT_WRITE = frozenset({"add", "commit", "checkout", "switch", "restore", "stash"})
@@ -132,6 +133,8 @@ def _program_group(words: list[str]) -> Group:
         while args and args[0].startswith("-"):
             args = args[2:] if args[0] in ("-s", "-k", "--signal", "--kill-after") else args[1:]
         return _program_group(args[1:]) if len(args) > 1 else "irreversible"
+    if prog == "rtk":  # RTK output filter: `rtk proxy cmd …` or `rtk cmd …` runs cmd
+        return _program_group(args[1:] if args[:1] == ["proxy"] else args)
     if prog == "uv" and args[:1] == ["pip"]:
         return _UV_PIP.get(args[1] if len(args) > 1 else "", "irreversible")
     if prog == "git":
