@@ -1,0 +1,54 @@
+schema: spec-driven
+
+context: |
+  ThetaRelay is a routing proxy between a coding agent and two model tiers (lite, frontier).
+  Hard constraints (from AGENTS.md), which every change must keep:
+  - Request bodies are forwarded unchanged except `model` (plus the documented exceptions:
+    thinking off for lite, top-level cache_control for OpenAI-format requests to anthropic/
+    frontier models, the triage note and its cache marker). System prompt, messages and tools
+    are never edited.
+  - The lite tier never receives the client's cloud credentials.
+  - Uncertain routing goes to the frontier tier.
+  - Tests never call real provider APIs; they mock with httpx.MockTransport.
+  - Secrets and API keys are never logged.
+  New behaviour that changes routing is opt-in until an evaluation shows it helps.
+
+rules:
+  specs:
+    - Every scenario must map to at least one automated test (mocked, no real APIs).
+    - If a change's value depends on real agent traffic (accuracy, savings, error rates), add an
+      evaluation capability `<capability>-eval` with its dataset, metrics and a pass gate.
+      Datasets are committed, built from captured sessions, and contain no secrets.
+  tasks:
+    - Each task group ends with the tests for its scenarios; the evaluation runs before archive.
+
+# Project context (optional)
+# Add only constraints that should guide OpenSpec artifacts and workflows.
+# Include constraints an agent cannot infer by reading the code.
+# Keep general project documentation and discoverable codebase facts out.
+# Example:
+#   context: |
+#     Designs and tasks must cover Windows, macOS, and Linux
+#     Write all artifacts in Spanish
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always state what is out of scope
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
