@@ -89,10 +89,11 @@ as data, not as commands. The heredoc counts as input to the command that opens 
 - **WHEN** a shell command is `cat > app.py <<'EOF'` followed by Python lines and `EOF`
 - **THEN** it is classified `write`, and the Python lines are not classified as commands
 
-#### Scenario: Heredoc read
+#### Scenario: Heredoc input
 
 - **WHEN** a shell command is `python - <<'EOF'` followed by Python lines and `EOF`
-- **THEN** it is classified `run`
+- **THEN** the Python lines are not classified as shell commands, and the command is classified
+  as inline interpreter code
 
 ### Requirement: Read-only shell programs
 
@@ -146,10 +147,38 @@ through a known runner: at least `pytest`, `python`, `uv run`, `just`, `make`, `
 - **WHEN** a shell command is `uv run pytest -q`
 - **THEN** it is classified `run`
 
+#### Scenario: Runner target that publishes
+
+- **WHEN** a shell command is `make deploy`, `just release` or `npm run publish`
+- **THEN** it is classified `irreversible`, because a runner argument that names deploying,
+  releasing, publishing, pushing or uploading is treated as leaving the working tree
+
 #### Scenario: Run then push
 
 - **WHEN** a shell command is `just test && git push`
 - **THEN** it is classified `irreversible`
+
+### Requirement: Inline interpreter code
+
+The system SHALL classify an interpreter (`python`, `python3`, `node`) given inline code (`-c`,
+`-e`, or `-` reading standard input) as `write`, directly or through `uv run`, and an
+interpreter given only `--version` or `-V` as `read`. Inline code is new code from the model
+that usually edits files; it is not project code.
+
+#### Scenario: Inline edit
+
+- **WHEN** a shell command is `python3 - <<'EOF'` with a script that rewrites a test file
+- **THEN** it is classified `write`
+
+#### Scenario: Inline through uv
+
+- **WHEN** a shell command is `uv run python -c 'import app'`
+- **THEN** it is classified `write`
+
+#### Scenario: Version check
+
+- **WHEN** a shell command is `python3 --version`
+- **THEN** it is classified `read`
 
 ### Requirement: Local writes
 
@@ -167,6 +196,20 @@ or local git state: at least `mv`, `cp`, `rm`, `mkdir`, `touch`, `sed -i`, `git 
 
 - **WHEN** a shell command is `rm -rf build`
 - **THEN** it is classified `write`
+
+### Requirement: Wrapper commands
+
+The system SHALL classify `timeout [options] DURATION command …` by the wrapped command.
+
+#### Scenario: Timeout around a test run
+
+- **WHEN** a shell command is `timeout 5 uv run pytest -x`
+- **THEN** it is classified `run`
+
+#### Scenario: Timeout around a push
+
+- **WHEN** a shell command is `timeout -s KILL 60 git push`
+- **THEN** it is classified `irreversible`
 
 ### Requirement: Everything else is irreversible
 
