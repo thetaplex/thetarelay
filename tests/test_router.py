@@ -978,3 +978,46 @@ async def test_log_no_triage_verdict_when_not_triaged(tmp_path: Path) -> None:
     app, _ = _app(tmp_path, 0.9)
     await _post(app, EASY)
     assert "triage_verdict" not in _last_line(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_log_triage_cache_usage_on_handed_back_request(tmp_path: Path) -> None:
+    usage = {"cost": 0.001, "cache_read_input_tokens": 500, "cache_creation_input_tokens": 700}
+    reply = {"content": [{"type": "text", "text": "<EASY/>"}], "usage": usage}
+    app, _ = _triage_app(tmp_path, json.dumps(reply).encode())
+    await _post(app, {**EASY, "messages": [{"role": "user", "content": "ls"}]})
+    line = _last_line(tmp_path)
+    assert line["triage_verdict"] == "easy"
+    assert line["triage_cached_tokens"] == 500
+    assert line["triage_cache_write_tokens"] == 700
+
+
+@pytest.mark.asyncio
+async def test_log_cache_fields_null_on_error_reply(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, 0.0)
+    app.state.http_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda r: (
+                httpx.Response(
+                    200, json={"answers": {"route": {"probabilities": {"easy": 0.0, "hard": 1.0}}}}
+                )
+                if "judge.test" in str(r.url)
+                else httpx.Response(429, json={"error": "slow down"})
+            )
+        )
+    )
+    await _post(app, EASY)
+    line = _last_line(tmp_path)
+    assert line["status"] == 429
+    assert line["cached_tokens"] is None
+    assert line["cache_write_tokens"] is None
+
+
+@pytest.mark.asyncio
+async def test_log_cache_fields_null_on_stream_without_usage(tmp_path: Path) -> None:
+    hard = _sse({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c2"}]}}]})
+    app, _ = _triage_app(tmp_path, hard, "text/event-stream")
+    await _post_openai(app, {**TOOL_RUN, "stream": True})
+    line = _last_line(tmp_path)
+    assert line["cached_tokens"] is None
+    assert line["cache_write_tokens"] is None

@@ -409,6 +409,8 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             "judge_ms": decision.judge_ms,
             "judge_error": decision.judge_error,
             "judge_state": decision.judge_state,
+            "cached_tokens": None,
+            "cache_write_tokens": None,
         }
         route_headers = {
             "x-thetarelay-tier": decision.tier,
@@ -457,6 +459,8 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                 # The frontier model hands the step over; the lite tier gets the original body.
                 triaged = None
                 record["triage_cost_usd"] = triage_usage.get("cost_usd")
+                record["triage_cached_tokens"] = triage_usage.get("cached_tokens")
+                record["triage_cache_write_tokens"] = triage_usage.get("cache_write_tokens")
                 decision.tier = "lite"
                 url, out_body, hdrs = _outbound(cfg, body, in_headers, "lite", provider)
                 record.update(tier="lite", model=out_body["model"])

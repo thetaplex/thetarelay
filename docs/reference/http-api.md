@@ -42,4 +42,5 @@ contains prompt text, so keep it private. It never contains request headers or A
 | `judge_state` | The summary that the judge read |
 | `status`, `upstream_ms` | Status code and time of the model request |
 | `input_tokens`, `cached_tokens`, `cache_write_tokens`, `output_tokens`, `cost_usd` | Usage from the response (both streamed and non-streamed). `cost_usd` is the cost that OpenRouter reports. `cache_write_tokens` is `null` when the provider does not report it. |
+| `triage_cached_tokens`, `triage_cache_write_tokens` | Cache read and write tokens of the frontier triage call. Present only on triage requests that the frontier model handed back (`easy`). |
 | `triage_verdict` | `easy` if the frontier model handed the step to the lite tier, `did_step` if it answered itself. Absent when the request was not triaged. |
