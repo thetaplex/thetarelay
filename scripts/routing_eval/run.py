@@ -37,8 +37,20 @@ PORT = 8790
 ARMS: dict[str, dict[str, str]] = {
     "frontier": {"THETARELAY_ROUTE_MODE": "frontier"},
     "judge": {"THETARELAY_ROUTE_MODE": "judge"},
-    "random": {"THETARELAY_ROUTE_MODE": "random"},  # share set from the judge arm, see run()
+    "triage": {"THETARELAY_ROUTE_MODE": "triage"},
+    "hybrid": {"THETARELAY_ROUTE_MODE": "hybrid"},
+    # Random arms: the lite share is added from the routed arm's turn logs, see arm_env().
+    "random": {"THETARELAY_ROUTE_MODE": "random"},  # alias of random-judge
+    "random-judge": {"THETARELAY_ROUTE_MODE": "random"},
+    "random-triage": {"THETARELAY_ROUTE_MODE": "random"},
+    "random-hybrid": {"THETARELAY_ROUTE_MODE": "random"},
     "lite": {"THETARELAY_ROUTE_MODE": "lite"},
+    "hybrid-no-stop": {"THETARELAY_ROUTE_MODE": "hybrid", "THETARELAY_ESCALATE_ON_STOP": "0"},
+    "hybrid-no-triage": {"THETARELAY_ROUTE_MODE": "judge"},
+    "hybrid-no-size-limit": {
+        "THETARELAY_ROUTE_MODE": "hybrid",
+        "THETARELAY_LITE_MAX_REQUEST_CHARS": "1000000000",
+    },
 }
 # Aider's polyglot benchmark wording, plus where the instructions and tests are.
 PROMPT = (
@@ -141,9 +153,21 @@ def attempt(ex: Path, agent_dir: Path, timeout: int) -> dict[str, Any]:
     return {"agent_status": agent_status, "agent_s": round(agent_s, 1), "passed": passed}
 
 
-def local_share(turn_logs: list[Path]) -> float:
+def local_share(turn_logs: list[Path]) -> float | None:
     rows = [json.loads(ln) for p in turn_logs if p.exists() for ln in p.read_text().splitlines()]
-    return sum(r["tier"] == "lite" for r in rows) / len(rows) if rows else 0.5
+    return sum(r["tier"] == "lite" for r in rows) / len(rows) if rows else None
+
+
+def arm_env(arm: str, results: Path) -> dict[str, str] | None:
+    """Proxy environment for an arm; None when a random arm's routed arm has no turn logs."""
+    env = dict(ARMS[arm])
+    if arm.startswith("random"):
+        routed = "judge" if arm == "random" else arm.removeprefix("random-")
+        share = local_share(sorted(results.glob(f"turns-{routed}-*.jsonl")))
+        if share is None:
+            return None
+        env["THETARELAY_RANDOM_LITE_SHARE"] = f"{share:.3f}"
+    return env
 
 
 def run(args: argparse.Namespace) -> None:
@@ -162,10 +186,10 @@ def run(args: argparse.Namespace) -> None:
         }
     for run_no in range(args.runs):
         for arm in args.arms.split(","):
-            env = dict(ARMS[arm])
-            if arm == "random":
-                share = local_share(sorted(RESULTS.glob("turns-judge-*.jsonl")))
-                env["THETARELAY_RANDOM_LITE_SHARE"] = f"{share:.3f}"
+            env = arm_env(arm, RESULTS)
+            if env is None:
+                print(f"skipping {arm}: no turn logs for its routed arm yet", flush=True)
+                continue
             todo = [ex for ex in exercises if (arm, run_no, ex.name) not in done]
             if not todo:
                 continue
