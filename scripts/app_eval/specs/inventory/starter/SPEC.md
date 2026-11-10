@@ -42,6 +42,8 @@ A product has:
 | `price_cents` | integer | Required, 1 or more. |
 | `stock` | integer | Optional, default `0`, 0 or more. |
 
+Every product response is a JSON object with exactly these four fields and no others.
+
 An order has:
 
 | Field | Type | Rules |
@@ -80,8 +82,9 @@ Body: `{"sku": ..., "name": ..., "price_cents": ..., "stock": ...}` (`stock` opt
 - `q`: only products whose `name` contains this text, case-insensitive.
 - `in_stock`: `true` for only products with `stock > 0`, `false` for only products with
   `stock == 0`.
-- `sort`: `sku` (default, A to Z), `name` (A to Z, case-insensitive, ties by `sku`), `price`
-  (lowest first, ties by `sku`) or `-price` (highest first, ties by `sku`). Anything else: `422`.
+- `sort`: `sku` (default, A to Z), `name` (A to Z, case-insensitive), `price` (lowest first)
+  or `-price` (highest first). Anything else: `422`. In every sort, ties break by `sku` A to Z;
+  this includes `-price`, so it is not simply the `price` order reversed.
 - `limit`: 1–100, default 50. `offset`: 0 or more, default 0. Outside those ranges: `422`.
   Paging applies after filtering and sorting.
 
@@ -152,5 +155,6 @@ example `order is shipped`) if it is not `placed`, and nothing changes.
 
 `200` with `[{"sku": ..., "name": ..., "quantity": ..., "revenue_cents": ...}]`: for each
 product in at least one `placed` or `shipped` order, the total quantity ordered and the total
-of `quantity * price_cents` over those orders. Cancelled orders do not count. Sorted by
+of `quantity * price_cents` over those orders, using each order item's `price_cents` (the
+price when the order was placed, not the product's current price). Cancelled orders do not count. Sorted by
 `quantity` (highest first), ties by `sku`. Optional `limit`: 1–100, default 10, else `422`.

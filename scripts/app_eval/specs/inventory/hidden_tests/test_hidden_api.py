@@ -407,6 +407,17 @@ def test_services_see_each_others_writes(db: str) -> None:
     assert order(ords, ("AAA", 13))["total_cents"] == 1300
 
 
+def test_sequential_orders_across_instances(db: str) -> None:
+    cat = TestClient(catalog.create_app(db))
+    product(cat, "AAA", stock=3)
+    a = TestClient(orders.create_app(db))
+    b = TestClient(orders.create_app(db))
+    body = {"customer": "ann", "items": [{"sku": "AAA", "quantity": 2}]}
+    assert a.post("/orders", json=body).status_code == 201
+    assert b.post("/orders", json=body).status_code == 409
+    assert stock(cat, "AAA") == 1
+
+
 def test_orders_service_can_start_first(tmp_path: Path) -> None:
     db = str(tmp_path / "fresh.sqlite")
     ords = TestClient(orders.create_app(db))

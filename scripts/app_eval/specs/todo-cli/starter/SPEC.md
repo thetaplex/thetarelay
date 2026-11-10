@@ -11,7 +11,7 @@ Build a small command-line to-do list that keeps its tasks in a JSON file.
 ## Layout
 
 - `app/cli.py` must define `main(argv: list[str]) -> int`. It runs one command, writes normal
-  output to stdout and error messages to stderr, and returns the exit code. It must not call
+  output to stdout and error messages to stderr, and returns the exit code. When a command succeeds, nothing is written to stderr. It must not call
   `sys.exit` or let `SystemExit` escape (including from `argparse`).
 - `uv run python -m app.cli <command> ...` must run `main(sys.argv[1:])` and exit with its code.
 - Put your own tests in `tests/`.
@@ -19,7 +19,8 @@ Build a small command-line to-do list that keeps its tasks in a JSON file.
 ## Data file
 
 Tasks are stored in the JSON file named by the `TODO_FILE` environment variable, or `todo.json`
-in the current directory if it is not set. The file format is up to you.
+in the current directory if it is not set. `main` reads `TODO_FILE` (and resolves `todo.json`
+against the current directory) on every call, not once at import. The file format is up to you.
 
 - A missing file means an empty list; it is created by the first command that changes data.
 - Commands that only read (`list`) never create the file.
