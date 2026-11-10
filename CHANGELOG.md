@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - The turn log records the step groups of each reply (`step_groups`), cache-write tokens and the triage verdict.
-- `THETARELAY_LITE_GUARD` (`off`, `irreversible`, `writes`): discards a lite reply with a malformed, irreversible or (at `writes`) file-editing tool call and asks the frontier tier instead. New reasons `lite_malformed`, `lite_irreversible` and `lite_wrote`, and turn-log fields `guarded_step_groups` and `lite_output_chars`.
+- `THETARELAY_LITE_GUARD` (`off`, `irreversible`, `writes`): discards a lite reply with a malformed, irreversible or (at `writes`) file-editing tool call and asks the frontier tier instead. New reasons `lite_malformed`, `lite_irreversible` and `lite_wrote`, and the turn-log field `guarded_step_groups`. The turn-log field `lite_output_chars` is now documented and is also set when the guard discards a reply.
 
 ### Changed
 
