@@ -35,9 +35,32 @@ def main(argv: list[str] | None = None) -> None:
     judge.add_argument("last_message", help="Last message of the conversation")
     judge.add_argument("--goal", default="", help="What the user asked for")
 
+    rep = sub.add_parser("report", help="Summarise a turn log: actual cost vs frontier-only")
+    rep.add_argument("path", metavar="PATH", help="Turn log file (THETARELAY_TURN_LOG)")
+    rep.add_argument("--frontier-model", help="Model to price against (default: most common)")
+    rep.add_argument("--offline", action="store_true", help="Do not fetch prices")
+    rep.add_argument("--json", action="store_true", help="Print one JSON object")
+    for k in ("input", "output", "cache-read", "cache-write"):
+        rep.add_argument(f"--price-{k}", type=float, metavar="USD", help="USD per million tokens")
+
     args = parser.parse_args(argv)
     if args.command is None:
         args = parser.parse_args(["proxy", *(argv or [])])
+
+    if args.command == "report":
+        from . import report
+
+        prices = None
+        if args.price_input is not None and args.price_output is not None:
+            prices = {"input": args.price_input, "output": args.price_output}
+            for k in ("cache_read", "cache_write"):
+                if (v := getattr(args, f"price_{k}")) is not None:
+                    prices[k] = v
+        r = report.build(
+            args.path, frontier_model=args.frontier_model, offline=args.offline, prices=prices
+        )
+        print(json.dumps(r, indent=2) if args.json else report.format_text(r))
+        return
 
     cfg = RouterConfig.from_env()
 
