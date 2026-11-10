@@ -247,6 +247,26 @@ def test_run_builds_every_spec_for_every_arm(
     assert len(seen) == 4
 
 
+def test_resumed_build_drops_stale_turn_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    specs, results = tmp_path / "specs", tmp_path / "results"
+    _specs(specs, "a")
+    (results / "a").mkdir(parents=True)
+    stale = results / "a" / "turns-pi-hybrid-0.jsonl"
+    stale.write_text('{"stale": 1}\n')
+    monkeypatch.setattr(app, "SPECS", specs)
+    monkeypatch.setattr(app, "RESULTS", results)
+
+    def fake_pi(work: Path, out: Path, env: dict[str, str], turn_log: Path) -> dict[str, Any]:
+        assert not turn_log.exists()
+        return {"status": "ok", "seconds": 1.0}
+
+    monkeypatch.setattr(app, "run_pi", fake_pi)
+    monkeypatch.setattr(app, "grade", lambda *_: {"hidden_passed": 1, "hidden_failed": 0})
+    app.run(argparse.Namespace(runs=1, arms="pi", specs=""))
+
+
 def test_app_arm_env(tmp_path: Path) -> None:
     assert app.arm_env("pi", tmp_path) == {"THETARELAY_ROUTE_MODE": "hybrid"}
     assert app.arm_env("pi-hybrid", tmp_path) == app.arm_env("pi", tmp_path)

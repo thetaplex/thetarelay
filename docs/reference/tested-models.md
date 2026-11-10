@@ -50,11 +50,20 @@ List each routed arm before its random arm. A random arm skips itself until its 
 a turn log in the same results folder, and the run loop goes through the arms in the order you
 list them.
 
+Before you start:
+
+- The `claude` arm needs Claude Code with its normal configuration: the Headroom proxy in
+  `ANTHROPIC_BASE_URL` (from your settings) and the RTK hook.
+- The `pi-*` arms need the `pi` and `rtk` CLIs on your `PATH`, and `OPENROUTER_API_KEY` set.
+
+Use a fresh results folder (`APP_EVAL_RESULTS`). Otherwise the run reuses builds and lite
+shares from earlier runs, which may have used other model settings.
+
 ```sh
 export OPENROUTER_API_KEY=sk-or-...
 export THETARELAY_LITE_API_KEY=$OPENROUTER_API_KEY
-uv run python scripts/app_eval/run.py run --runs 10 --arms claude,pi-frontier,pi-lite,pi-judge,pi-random-judge,pi-triage,pi-random-triage,pi-hybrid,pi-random-hybrid,pi-hybrid-no-stop,pi-hybrid-no-triage,pi-hybrid-no-size-limit
-uv run python scripts/app_eval/run.py report
+APP_EVAL_RESULTS=scripts/app_eval/results-release uv run python scripts/app_eval/run.py run --runs 10 --arms claude,pi-frontier,pi-lite,pi-judge,pi-random-judge,pi-triage,pi-random-triage,pi-hybrid,pi-random-hybrid,pi-hybrid-no-stop,pi-hybrid-no-triage,pi-hybrid-no-size-limit
+APP_EVAL_RESULTS=scripts/app_eval/results-release uv run python scripts/app_eval/run.py report
 ```
 
 `--specs` defaults to all specs (`bookmarks`, `todo-cli`, `inventory`). The run resumes where it

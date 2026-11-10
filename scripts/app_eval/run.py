@@ -321,6 +321,7 @@ def run(args: argparse.Namespace) -> None:
                     rec = run_claude(work, out)
                 else:
                     turn_log = spec_results / f"turns-{arm}-{run_no}.jsonl"
+                    turn_log.unlink(missing_ok=True)  # a killed earlier session left rows
                     rec = run_pi(work, out, env, turn_log)
                 rec.update(grade(work, spec))
                 shutil.copytree(
