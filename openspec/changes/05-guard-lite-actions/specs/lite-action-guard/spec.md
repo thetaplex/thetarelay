@@ -42,6 +42,11 @@ a tool not in the request's `tools`, has arguments that are not valid JSON, or l
 the tool schema lists as required, and send the request to the frontier tier with reason suffix
 `lite_malformed`.
 
+#### Scenario: Arguments not an object
+
+- **WHEN** a lite reply calls `bash` with arguments that are not a JSON object
+- **THEN** the agent receives the frontier reply, with the reason suffix `; lite_malformed`
+
 #### Scenario: Unknown tool
 
 - **WHEN** the request offers `read`, `bash`, `edit`, `write` and the lite reply calls `run_tests`
@@ -62,6 +67,11 @@ send the request to the frontier tier with reason suffix `lite_wrote`.
 - **WHEN** the guard level is `writes` and the lite reply calls `edit`
 - **THEN** the agent receives the frontier reply with reason suffix `; lite_wrote`
 
+#### Scenario: Lite model runs tests
+
+- **WHEN** the guard level is `writes` and the lite reply calls `bash` with `uv run pytest -q`
+- **THEN** the agent receives the lite reply unchanged
+
 #### Scenario: Lite model reads
 
 - **WHEN** the guard level is `writes` and the lite reply calls `read` and `bash` with `rg foo`
@@ -71,6 +81,23 @@ send the request to the frontier tier with reason suffix `lite_wrote`.
 
 The system SHALL record in the turn log the step group of a discarded lite reply and the length
 of its output, and SHALL NOT send any part of the discarded reply to the frontier tier.
+
+#### Scenario: Forced lite mode
+
+- **WHEN** `THETARELAY_ROUTE_MODE=lite` and the guard level is `writes`, and the lite reply calls
+  `edit`
+- **THEN** the agent receives the lite reply unchanged
+
+#### Scenario: Streamed lite reply
+
+- **WHEN** a streamed lite reply calls `bash` with `git push`, the guard level is `irreversible`
+  and `THETARELAY_ESCALATE_ON_STOP=false`
+- **THEN** the agent receives the frontier reply, and no part of the lite stream reaches it
+
+#### Scenario: Turn log of a discard
+
+- **WHEN** the guard discards a lite reply that calls `edit`
+- **THEN** the turn log line has `"guarded_step_groups": ["write"]` and `lite_output_chars`
 
 #### Scenario: Frontier request after a discard
 
