@@ -174,6 +174,7 @@ def format_text(r: dict[str, Any]) -> str:
     if r["skipped_lines"]:
         n = r["skipped_lines"]
         out.append(f"{n} line{'s' * (n != 1)} skipped (not valid JSON)")
+    if r["reasons"]:
         out.append("reasons:")
         out += [f"  {k}: {v}" for k, v in sorted(r["reasons"].items())]
     return "\n".join(out)
