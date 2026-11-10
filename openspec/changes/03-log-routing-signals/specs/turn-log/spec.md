@@ -19,6 +19,16 @@ have an empty list.
 - **WHEN** the agent receives a reply calling `read` then `edit`
 - **THEN** the turn log line has `"step_groups": ["read", "write"]`
 
+#### Scenario: Unreadable tool call
+
+- **WHEN** a reply signals a tool call whose name or arguments cannot be read
+- **THEN** the turn log line has `"step_groups": ["irreversible"]`
+
+#### Scenario: Error reply
+
+- **WHEN** the upstream returns a status other than 200
+- **THEN** the turn log line has `"step_groups": []`
+
 #### Scenario: Streamed frontier reply
 
 - **WHEN** a streamed frontier reply calls `bash` with `git push`
@@ -29,6 +39,16 @@ have an empty list.
 
 The system SHALL record `cache_write_tokens` from the provider's usage report when present
 (Anthropic `cache_creation_input_tokens`), and `null` when the provider does not report it.
+
+#### Scenario: OpenRouter cache write
+
+- **WHEN** an OpenAI-format reply reports `prompt_tokens_details.cache_write_tokens: 1200`
+- **THEN** the turn log line has `"cache_write_tokens": 1200`
+
+#### Scenario: Not reported
+
+- **WHEN** a reply's usage has no cache-write count
+- **THEN** the turn log line has `"cache_write_tokens": null`
 
 #### Scenario: Frontier call after a long lite streak
 
@@ -47,6 +67,11 @@ triaged SHALL NOT have the field.
 - **WHEN** a triaged request's frontier reply is `<EASY/>`
 - **THEN** the turn log line has `"triage_verdict": "easy"` and the judge summary in
   `judge_state`
+
+#### Scenario: Frontier does the step
+
+- **WHEN** a triaged request's frontier reply is a normal answer, streamed or not
+- **THEN** the turn log line has `"triage_verdict": "did_step"`
 
 #### Scenario: Not triaged
 
