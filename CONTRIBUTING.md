@@ -22,6 +22,10 @@ Add dependencies with `uv add` (or `uv add --dev`) and commit the updated `uv.lo
 - Tests never call real provider APIs; mock HTTP with `httpx.MockTransport`.
 - Never print or log a secret (API keys or authorization headers).
 - Code must work on Linux, macOS and Windows.
+- Changing step classification (`src/thetarelay/steps.py`)? `just check` runs it on the
+  labelled real tool calls in `scripts/step_eval/calls.jsonl` and fails if a call is classified
+  less severe than its label. Add new calls with `scripts/step_eval/extract.py`, label them, and
+  run `scripts/step_eval/report.py` to see the over-cautious ones.
 
 ## Pull requests
 

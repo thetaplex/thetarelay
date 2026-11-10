@@ -21,6 +21,7 @@ from fastapi.responses import StreamingResponse
 from . import __version__
 from .config import RouterConfig
 from .router import Decision, conversation_key, decide, events
+from .steps import signals_tool_call
 
 logger = logging.getLogger("thetarelay.proxy")
 
@@ -133,12 +134,6 @@ def _usage(provider: str, data: dict[str, Any]) -> dict[str, Any]:
         "output_tokens": u.get("completion_tokens"),
         "cost_usd": u.get("cost"),
     }
-
-
-def _has_tool_call(raw: bytes) -> bool:
-    """True if a buffered OpenAI or Anthropic reply (JSON or SSE) contains a tool call."""
-    flat = raw.replace(b" ", b"")
-    return b'"finish_reason":"tool_calls"' in flat or b'"stop_reason":"tool_use"' in flat
 
 
 def _text_verdict(text: str) -> bool | None:
@@ -476,7 +471,7 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                 # Buffer the lite reply; replay it only if it continues the agent loop.
                 raw = await upstream.aread()
                 await upstream.aclose()
-                if _has_tool_call(raw):
+                if signals_tool_call(raw):
                     upstream = httpx.Response(
                         200, headers=upstream.headers, stream=httpx.ByteStream(raw)
                     )
