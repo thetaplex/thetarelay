@@ -107,3 +107,10 @@ def test_ablation_settings() -> None:
         "THETARELAY_LITE_MAX_REQUEST_CHARS": "1000000000",
     }
     assert routing.ARMS["triage"] == {"THETARELAY_ROUTE_MODE": "triage"}
+
+
+def test_random_hybrid_ignores_ablation_logs(tmp_path: Path) -> None:
+    _turns(tmp_path, "hybrid", 2, 3)
+    (tmp_path / "turns-hybrid-no-stop-0.jsonl").write_text('{"tier": "lite"}\n' * 10)
+    env = routing.arm_env("random-hybrid", tmp_path)
+    assert env["THETARELAY_RANDOM_LITE_SHARE"] == "0.400"

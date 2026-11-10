@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -158,12 +159,18 @@ def local_share(turn_logs: list[Path]) -> float | None:
     return sum(r["tier"] == "lite" for r in rows) / len(rows) if rows else None
 
 
+def turn_logs(results: Path, arm: str) -> list[Path]:
+    """Turn logs of exactly this arm (`hybrid` must not match `hybrid-no-stop`)."""
+    pat = rf"turns-{re.escape(arm)}-\d+\.jsonl"
+    return sorted(p for p in results.glob("turns-*.jsonl") if re.fullmatch(pat, p.name))
+
+
 def arm_env(arm: str, results: Path) -> dict[str, str] | None:
     """Proxy environment for an arm; None when a random arm's routed arm has no turn logs."""
     env = dict(ARMS[arm])
     if arm.startswith("random"):
         routed = "judge" if arm == "random" else arm.removeprefix("random-")
-        share = local_share(sorted(results.glob(f"turns-{routed}-*.jsonl")))
+        share = local_share(turn_logs(results, routed))
         if share is None:
             return None
         env["THETARELAY_RANDOM_LITE_SHARE"] = f"{share:.3f}"
@@ -236,9 +243,7 @@ def report(_: argparse.Namespace) -> None:
             continue
         res = by_arm[arm]
         turns = [
-            json.loads(ln)
-            for p in sorted(RESULTS.glob(f"turns-{arm}-*.jsonl"))
-            for ln in p.read_text().splitlines()
+            json.loads(ln) for p in turn_logs(RESULTS, arm) for ln in p.read_text().splitlines()
         ]
         front = [t for t in turns if t["tier"] == "frontier"]
         cost = sum(t.get("cost_usd") or 0 for t in front)
