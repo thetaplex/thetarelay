@@ -80,7 +80,7 @@ def test_cache_prices_and_write_tokens(tmp_path: Path) -> None:
     rows = [line(inp=1_000_000, cached=400_000, out=0, cache_write_tokens=100_000)]
     prices = {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_write": 6.25}
     r = build(write(tmp_path, rows), prices=prices)
-    # OpenAI format: input includes reads and writes: (1M - 0.4M - 0.1M) * 5 + 0.4M * 0.5 + 0.1M * 6.25
+    # OpenAI: input includes reads and writes: 0.5M * 5 + 0.4M * 0.5 + 0.1M * 6.25
     assert r["estimate_usd"] == pytest.approx(2.5 + 0.2 + 0.625)
     assert r["tiers"]["lite"]["cache_write_tokens"] == 100_000
 
