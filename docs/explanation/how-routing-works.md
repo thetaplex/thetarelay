@@ -37,6 +37,13 @@ the tier.
    contains no tool call (so it would end the agent's turn), ThetaRelay discards it and sends the
    request to the frontier tier. This holds after a passing test run too: the frontier model
    decides when the work is done.
+7. **Lite guard.** If `THETARELAY_LITE_GUARD` is `irreversible` or `writes` (default `off`),
+   ThetaRelay checks each lite reply before the agent sees it. It discards the reply and sends
+   the request to the frontier tier if a tool call is malformed (unreadable, not an offered
+   tool, arguments that are not a JSON object, or a missing required key), if a step is
+   irreversible (for example `git push`), or, at level `writes`, if a step edits files. Test
+   runs stay with the lite tier. The check runs before the stop check, and not in
+   `THETARELAY_ROUTE_MODE=lite`.
 
 A wrong decision has two different costs. An easy step sent to the frontier tier costs money
 only. A hard step sent to the lite tier can cost quality. For this reason every uncertain case

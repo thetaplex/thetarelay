@@ -21,7 +21,7 @@ ThetaRelay forwards the request body without change, except:
 |---|---|
 | `x-thetarelay-tier` | `lite` or `frontier` |
 | `x-thetarelay-model` | Model that wrote the response |
-| `x-thetarelay-reason` | `judge`, `recent_failure (N requests ago)`, `too_large_for_lite` or `judge_error`. `; lite_failed` or `; lite_stopped` is added if the lite server failed or stopped without a tool call and the frontier tier answered. |
+| `x-thetarelay-reason` | `judge`, `recent_failure (N requests ago)`, `too_large_for_lite` or `judge_error`. `; lite_failed`, `; lite_stopped`, `; lite_malformed`, `; lite_irreversible` or `; lite_wrote` is added if the lite tier failed, stopped without a tool call, or was discarded by the lite guard (see `THETARELAY_LITE_GUARD`), and the frontier tier answered. |
 | `x-thetarelay-p-easy` | The judge's P(easy), if the judge was asked |
 
 ## Turn log
@@ -46,3 +46,4 @@ contains prompt text, so keep it private. It never contains request headers or A
 | `step_groups` | The step groups (`read`, `run`, `write`, `irreversible`) of the tool calls in the reply that reached the agent, in order. `[]` for a text-only reply or a status other than 200; `["irreversible"]` when a tool call signals but cannot be read. |
 | `stream_cut` | `true` when a streamed reply ended early (upstream error or client disconnect). `step_groups` then comes from the bytes already relayed, and is `["irreversible"]` when a tool call had started. Absent when the stream finished. |
 | `triage_verdict` | `easy` if the frontier model handed the step to the lite tier, `did_step` if it answered itself. Absent when the request was not triaged or the triage reply had a status other than 200. |
+| `guarded_step_groups`, `lite_output_chars` | Only when the lite guard discarded a lite reply: the step groups of its tool calls (`read`, `run`, `write` or `irreversible`) and the length of the reply in characters. For a reply with a tool call that cannot be read, the groups are `["irreversible"]`. |

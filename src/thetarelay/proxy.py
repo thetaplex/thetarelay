@@ -132,7 +132,8 @@ def _guard(cfg: RouterConfig, body: dict[str, Any], raw: bytes) -> tuple[str | N
             # OpenAI nests the tool under `function`; Anthropic does not.
             spec = tool.get("function", tool)
             schema = spec.get("parameters" if "function" in tool else "input_schema") or {}
-            required[spec["name"]] = schema.get("required") or []
+            if "name" in spec:  # e.g. OpenAI custom tools have no top-level name
+                required[spec["name"]] = schema.get("required") or []
         for name, args in calls:
             parsed = json.loads(args) if name in required else None
             if not isinstance(parsed, dict) or any(k not in parsed for k in required[name]):

@@ -1455,6 +1455,17 @@ def test_guard_fails_closed_on_odd_requests() -> None:
     assert guard_reason(RouterConfig(), {"tools": ["read"]}, raw) is None  # level off
 
 
+def test_guard_skips_tools_without_a_name() -> None:
+    cfg = RouterConfig(lite_guard="irreversible")
+    custom = {"type": "custom", "custom": {"name": "apply_patch"}}
+    read = {"type": "function", "function": {"name": "read", "parameters": {"required": ["path"]}}}
+    body = {"tools": [custom, read]}
+    ok = _lite_reply("openai", False, ("read", '{"path": "a.py"}'))
+    assert guard_reason(cfg, body, ok) is None
+    bad = _lite_reply("openai", False, ("apply_patch", "{}"))
+    assert guard_reason(cfg, body, bad) == "lite_malformed"  # not among the named tools
+
+
 @pytest.mark.asyncio
 async def test_guard_does_not_run_in_forced_lite_mode(tmp_path: Path) -> None:
     lite = _lite_reply("anthropic", True, EDIT)
