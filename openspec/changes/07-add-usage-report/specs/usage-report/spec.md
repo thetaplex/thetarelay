@@ -13,6 +13,23 @@ The command `thetarelay report <path>` SHALL print, per tier: requests, input, c
 write and output tokens, and cost; and in total: actual cost, estimated frontier-only cost, and
 the saving as a percentage.
 
+#### Scenario: Estimate arithmetic
+
+- **WHEN** a lite line has 1,000,000 input tokens (none cached) and 10,000 output tokens, and the
+  frontier prices are 5 USD and 25 USD per million input and output tokens
+- **THEN** that line adds 5.25 USD to the frontier-only estimate
+
+#### Scenario: Requests without a reported cost
+
+- **WHEN** 60 lite lines have `cost_usd: null`
+- **THEN** they count as 0 in the actual cost, and the report says 60 requests had no reported
+  cost
+
+#### Scenario: JSON output
+
+- **WHEN** the report runs with `--json`
+- **THEN** it prints one JSON object with the same numbers as the table
+
 #### Scenario: Mixed log
 
 - **WHEN** the log has 60 lite and 40 frontier requests with `cost_usd` set
@@ -42,6 +59,16 @@ The report SHALL count requests by routing reason, including fallback suffixes s
 
 The report SHALL skip lines that are not valid JSON and count them, and SHALL show `n/a` for a
 cost it cannot compute.
+
+#### Scenario: Prices given offline
+
+- **WHEN** the report runs with `--offline --price-input 5 --price-output 25`
+- **THEN** it makes no network request and uses those prices for the estimate
+
+#### Scenario: Price lookup fails
+
+- **WHEN** the models list cannot be fetched
+- **THEN** the frontier-only cost shows `n/a` with the reason, and the rest of the report prints
 
 #### Scenario: Prices unavailable offline
 

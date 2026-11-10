@@ -32,7 +32,8 @@ None.
 - Budget cap per day or per session (from the review). It needs a decision on what happens at
   the cap (block requests, or force the lite tier), and no user has asked for it.
 
-## Open for review
+## Decided
 
-- The frontier-only estimate assumes the frontier model would have written the same number of
-  output tokens as the lite model. That is a guess; label it as an estimate in the output.
+- The frontier-only estimate assumes the frontier model would have used the same token counts.
+  The report labels it as an estimate and prints the assumption and the prices it used. See
+  `design.md`.
