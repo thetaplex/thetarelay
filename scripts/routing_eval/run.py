@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import random
 import shutil
@@ -27,6 +26,9 @@ import urllib.request
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from eval_stats import newcombe
 
 HERE = Path(__file__).resolve().parent
 RESULTS = Path(os.environ.get("ROUTING_EVAL_RESULTS", HERE / "results"))
@@ -191,31 +193,6 @@ def run(args: argparse.Namespace) -> None:
                 proxy.terminate()
                 proxy.wait()
                 shutil.rmtree(agent_dir, ignore_errors=True)
-
-
-def newcombe(a: list[bool], b: list[bool], z: float = 1.96) -> tuple[float, float, float]:
-    """Paired difference of proportions mean(a) - mean(b) with Newcombe's hybrid score CI."""
-    n = len(a)
-
-    def wilson(k: int) -> tuple[float, float]:
-        p = k / n
-        c = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
-        d = 1 + z * z / n
-        return (p + z * z / (2 * n) - c) / d, (p + z * z / (2 * n) + c) / d
-
-    pa, pb = sum(a) / n, sum(b) / n
-    la, ua = wilson(sum(a))
-    lb, ub = wilson(sum(b))
-    n11 = sum(x and y for x, y in zip(a, b, strict=True))
-    n10 = sum(x and not y for x, y in zip(a, b, strict=True))
-    n01 = sum(y and not x for x, y in zip(a, b, strict=True))
-    n00 = n - n11 - n10 - n01
-    denom = math.sqrt((n11 + n10) * (n01 + n00) * (n11 + n01) * (n10 + n00))
-    phi = (n11 * n00 - n10 * n01) / denom if denom else 0.0
-    diff = pa - pb
-    lo = diff - math.sqrt((pa - la) ** 2 - 2 * phi * (pa - la) * (ub - pb) + (ub - pb) ** 2)
-    hi = diff + math.sqrt((ua - pa) ** 2 - 2 * phi * (ua - pa) * (pb - lb) + (pb - lb) ** 2)
-    return diff, lo, hi
 
 
 def report(_: argparse.Namespace) -> None:
