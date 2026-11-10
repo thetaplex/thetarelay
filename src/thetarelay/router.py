@@ -17,6 +17,7 @@ from typing import Any, Literal
 import httpx
 
 from .config import RouterConfig
+from .steps import Group, classify
 
 Tier = Literal["lite", "frontier"]
 
@@ -54,6 +55,9 @@ class Event:
     kind: Literal["user", "assistant", "call", "result"]
     text: str
     failed: bool = False
+    # Results only: step group and shell command of the linked call.
+    group: Group | None = None
+    command: str | None = None
 
 
 @dataclass
@@ -80,9 +84,24 @@ def _text(content: Any) -> str:
     return ""
 
 
+def _link(calls: dict[str, tuple[str, Any]], call_id: Any) -> tuple[Group, str | None]:
+    """Step group and shell command of the call a result answers; unknown id is irreversible."""
+    if call_id not in calls:
+        return "irreversible", None
+    name, args = calls[call_id]
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            args = None
+    cmd = args.get("command") if isinstance(args, dict) else None
+    return classify(name, calls[call_id][1]), cmd if isinstance(cmd, str) else None
+
+
 def events(body: dict[str, Any], provider: str) -> list[Event]:
     """Flatten the conversation of an Anthropic or OpenAI request into steps."""
     out: list[Event] = []
+    calls: dict[str, tuple[str, Any]] = {}
     for msg in body.get("messages") or []:
         if not isinstance(msg, dict):
             continue
@@ -90,12 +109,14 @@ def events(body: dict[str, Any], provider: str) -> list[Event]:
         if provider == "openai":
             if role == "tool":
                 text = _text(content)
-                out.append(Event("result", text, bool(_FAILURE.search(text))))
+                group, cmd = _link(calls, msg.get("tool_call_id"))
+                out.append(Event("result", text, bool(_FAILURE.search(text)), group, cmd))
                 continue
             if text := _text(content).strip():
                 out.append(Event("assistant" if role == "assistant" else "user", text))
             for tc in msg.get("tool_calls") or []:
                 fn = tc.get("function") or {}
+                calls[tc.get("id")] = (fn.get("name", ""), fn.get("arguments", ""))
                 out.append(Event("call", f"{fn.get('name', '')} {fn.get('arguments', '')}"))
             continue
         if isinstance(content, str):
@@ -107,11 +128,13 @@ def events(body: dict[str, Any], provider: str) -> list[Event]:
                 out.append(Event("assistant" if role == "assistant" else "user", block["text"]))
             elif kind == "tool_use":
                 args = json.dumps(block.get("input", {}), ensure_ascii=False)
+                calls[block.get("id")] = (block.get("name", ""), args)
                 out.append(Event("call", f"{block.get('name', '')} {args}"))
             elif kind == "tool_result":
                 text = _text(block.get("content", ""))
                 failed = bool(block.get("is_error")) or bool(_FAILURE.search(text))
-                out.append(Event("result", text, failed))
+                group, cmd = _link(calls, block.get("tool_use_id"))
+                out.append(Event("result", text, failed, group, cmd))
     # Agent harness reminders are not part of the task.
     for e in out:
         if e.kind == "user":

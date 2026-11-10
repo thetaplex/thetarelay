@@ -668,3 +668,61 @@ async def test_triage_marks_the_cache_for_openai_models_too(tmp_path: Path) -> N
         {"type": "text", "text": "app tests", "cache_control": {"type": "ephemeral"}}
     ]
     assert "<EASY/>" in sent["messages"][-1]["content"]
+
+
+def _anth(calls: list[tuple[str, str, dict[str, Any]]], result_ids: list[str]) -> dict[str, Any]:
+    return {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": i, "name": n, "input": a} for i, n, a in calls
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": i, "content": "x"} for i in result_ids
+                ],
+            },
+        ]
+    }
+
+
+def _oai(calls: list[tuple[str, str, dict[str, Any]]], result_ids: list[str]) -> dict[str, Any]:
+    return {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": i,
+                        "type": "function",
+                        "function": {"name": n, "arguments": json.dumps(a)},
+                    }
+                    for i, n, a in calls
+                ],
+            },
+            *({"role": "tool", "tool_call_id": i, "content": "x"} for i in result_ids),
+        ]
+    }
+
+
+@pytest.mark.parametrize(("build", "provider"), [(_anth, "anthropic"), (_oai, "openai")])
+def test_results_linked_to_calls_out_of_order(build: Any, provider: str) -> None:
+    calls = [("a", "read", {"path": "f"}), ("b", "bash", {"command": "ls && rm x"})]
+    results = [e for e in events(build(calls, ["b", "a"]), provider) if e.kind == "result"]
+    assert [(e.group, e.command) for e in results] == [
+        ("write", "ls && rm x"),
+        ("read", None),
+    ]
+
+
+@pytest.mark.parametrize(("build", "provider"), [(_anth, "anthropic"), (_oai, "openai")])
+def test_unlinked_result_is_irreversible(build: Any, provider: str) -> None:
+    calls = [("a", "read", {"path": "f"})]
+    (res,) = [e for e in events(build(calls, ["zzz"]), provider) if e.kind == "result"]
+    assert (res.group, res.command) == ("irreversible", None)
+    other = [e for e in events(build(calls, []), provider) if e.kind == "call"]
+    assert (other[0].group, other[0].command) == (None, None)
