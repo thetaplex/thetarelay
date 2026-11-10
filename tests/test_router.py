@@ -2072,3 +2072,29 @@ async def test_shadow_skipped_without_a_turn_log(
     assert resp.content == SRC_READ
     await _drain(app)
     assert not _lite_calls(calls)  # a shadow nobody logs would only cost money
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"route_mode": "frontier"}, {"route_mode": "judge"}],
+)
+async def test_shadow_skipped_for_oversized_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overrides: dict[str, Any]
+) -> None:
+    _coin(monkeypatch, 0.0)
+    app, calls = _shadow_app(tmp_path, lite_max_request_chars=10, **overrides)
+    resp = await _post(app, EASY)
+    assert resp.headers["x-thetarelay-tier"] == "frontier"
+    await _drain(app)
+    assert not _lite_calls(calls)  # the lite tier cannot take it
+    assert "shadow" not in _lines(tmp_path)[0]
+
+
+async def test_judge_skipped_in_frontier_mode_without_a_turn_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coin(monkeypatch, 0.0)
+    app, calls = _shadow_app(tmp_path, turn_log_path="")
+    await _post(app, EASY)
+    await _drain(app)
+    assert not any("judge.test" in c[0] for c in calls)  # nobody would see its answer

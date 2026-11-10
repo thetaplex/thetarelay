@@ -23,7 +23,7 @@ from fastapi.responses import StreamingResponse
 
 from . import __version__
 from .config import RouterConfig
-from .router import Decision, conversation_key, decide, events
+from .router import Decision, conversation_key, decide, events, request_chars
 from .steps import SEVERITY, Group, classify, signals_tool_call, tool_calls
 
 logger = logging.getLogger("thetarelay.proxy")
@@ -562,6 +562,7 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             and not decision.triage
             and cfg.shadow_share > 0
             and cfg.turn_log_path  # a shadow exists only to be logged
+            and request_chars(body) <= cfg.lite_max_request_chars  # too big for the lite tier
             and random.random() < cfg.shadow_share  # noqa: S311
         ):
             shadow = track(asyncio.create_task(lite_shadow(), name="shadow"))

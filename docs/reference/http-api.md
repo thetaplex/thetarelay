@@ -31,7 +31,7 @@ contains prompt text, so keep it private. It never contains request headers or A
 
 | Field | Value |
 |---|---|
-| `ts` | Time the request finished, ISO 8601, UTC |
+| `ts` | Time the request started (after the routing decision), ISO 8601, UTC |
 | `provider` | `anthropic` or `openai` |
 | `conversation` | First 12 hex characters of the SHA-256 of the first user message |
 | `messages` | Number of messages in the request |
@@ -48,7 +48,7 @@ contains prompt text, so keep it private. It never contains request headers or A
 | `triage_verdict` | `easy` if the frontier model handed the step to the lite tier, `did_step` if it answered itself. Absent when the request was not triaged or the triage reply had a status other than 200. |
 | `guarded_step_groups` | Only when the lite guard discarded a lite reply: the step groups of that reply's tool calls (`read`, `run`, `write` or `irreversible`). For a call that cannot be read it is `["irreversible"]`. |
 | `lite_output_chars`, `discarded_lite_cost_usd` | When a lite reply was discarded, by the lite guard or by `lite_stopped`: the size of the reply in bytes and the cost OpenRouter reported for it (`null` if not reported). The line's other usage fields are those of the frontier call that replaced it. |
-| `shadow` | Present only on requests that got a shadow (see [How routing works](../explanation/how-routing-works.md#shadow-routing)). `{"frontier": [...], "lite": [...], "match": true\|false}`, or `{"error": "<reason>"}`. Each call is `{"name", "group", "target", "args_sha256"}`. `target` is the `path`, `file_path` or shell `command` argument, cut to 200 characters, or `null`. `args_sha256` is the SHA-256 of the arguments as canonical JSON (sorted keys, no spaces). `match` is `true` when both replies have the same number of calls and each pair has the same `name` and `target`. Error values: `timeout` (no lite reply within `THETARELAY_LITE_TIMEOUT`), the exception class name (for example `ConnectError`), `http_<n>` (lite status other than 200), `parse` (a reply could not be read), `shutdown` (ThetaRelay stopped first). |
+| `shadow` | Present only on requests that got a shadow (see [How routing works](../explanation/how-routing-works.md#shadow-routing)). `{"frontier": [...], "lite": [...], "match": true\|false}`, or `{"error": "<reason>"}`. Each call is `{"name", "group", "target", "args_sha256"}`. `target` is the `path`, `file_path` or shell `command` argument, cut to 200 characters, or `null`. `args_sha256` is the SHA-256 of the arguments as canonical JSON (sorted keys, no spaces, non-ASCII characters as `\uXXXX` escapes), matching Python's `json.dumps(..., sort_keys=True, separators=(",", ":"))`. `match` is `true` when both replies have the same number of calls and each pair has the same `name` and `target`. Error values: `timeout` (no lite reply within `THETARELAY_LITE_TIMEOUT`), the exception class name (for example `ConnectError`), `http_<n>` (lite status other than 200), `parse` (a reply could not be read), `shutdown` (ThetaRelay stopped first). |
 
 A request with a shadow is written after its shadow finishes, so its line can come later than lines of requests that
 started after it. Sort lines by `ts`. The log holds no argument text beyond `target` (at most 200 characters).

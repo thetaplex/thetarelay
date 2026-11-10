@@ -273,7 +273,8 @@ async def decide(
 ) -> Decision:
     d = await _decide(cfg, client, body, provider)
     # Shadow routing: record the judge's answer on paths that skip it; tier and reason stay.
-    if cfg.shadow_share > 0 and d.judge_ms is None:
+    # Without a turn log nobody sees the answer, so the agent must not wait for it.
+    if cfg.shadow_share > 0 and cfg.turn_log_path and d.judge_ms is None:
         d.p_easy, d.judge_ms, d.judge_error = await _judge(cfg, client, d.judge_state)
     return d
 
