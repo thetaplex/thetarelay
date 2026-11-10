@@ -83,6 +83,9 @@ class RouterConfig:
     # above the threshold, the frontier model triages instead of a plain frontier request.
     route_mode: str = "hybrid"
     random_lite_share: float = 0.5
+    # Share of frontier requests also sent to the lite tier as a shadow; above 0 the judge is
+    # asked in every mode.
+    shadow_share: float = 0.0
     # A lite reply without a tool call ends the agent's turn. Such replies are discarded and
     # the request goes to the frontier tier: the lite model takes tool steps, the frontier
     # model decides when the task is done. Lite responses are buffered to check this.
@@ -111,6 +114,8 @@ class RouterConfig:
             raise ValueError(
                 f"random_lite_share must be between 0 and 1, got {self.random_lite_share}"
             )
+        if not 0.0 <= self.shadow_share <= 1.0:
+            raise ValueError(f"shadow_share must be between 0 and 1, got {self.shadow_share}")
 
     @classmethod
     def from_env(cls) -> RouterConfig:
@@ -141,6 +146,7 @@ class RouterConfig:
             stay_requests=_env_int("THETARELAY_STAY_REQUESTS", cls.stay_requests),
             route_mode=_env("THETARELAY_ROUTE_MODE", cls.route_mode),
             random_lite_share=_env_float("THETARELAY_RANDOM_LITE_SHARE", cls.random_lite_share),
+            shadow_share=_env_float("THETARELAY_SHADOW_SHARE", cls.shadow_share),
             escalate_on_stop=_env_bool("THETARELAY_ESCALATE_ON_STOP", cls.escalate_on_stop),
             lite_guard=_env("THETARELAY_LITE_GUARD", cls.lite_guard),
             turn_log_path=_env("THETARELAY_TURN_LOG", ""),

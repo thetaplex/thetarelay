@@ -257,7 +257,28 @@ async def ask_judge(cfg: RouterConfig, client: httpx.AsyncClient, state: dict[st
     return float(resp.json()["answers"]["route"]["probabilities"]["easy"])
 
 
+async def _judge(
+    cfg: RouterConfig, client: httpx.AsyncClient, state: dict[str, Any]
+) -> tuple[float | None, float, str | None]:
+    started = time.perf_counter()
+    try:
+        p_easy = await ask_judge(cfg, client, state)
+    except Exception as exc:
+        return None, (time.perf_counter() - started) * 1000.0, repr(exc)
+    return p_easy, (time.perf_counter() - started) * 1000.0, None
+
+
 async def decide(
+    cfg: RouterConfig, client: httpx.AsyncClient, body: dict[str, Any], provider: str
+) -> Decision:
+    d = await _decide(cfg, client, body, provider)
+    # Shadow routing: record the judge's answer on paths that skip it; tier and reason stay.
+    if cfg.shadow_share > 0 and d.judge_ms is None:
+        d.p_easy, d.judge_ms, d.judge_error = await _judge(cfg, client, d.judge_state)
+    return d
+
+
+async def _decide(
     cfg: RouterConfig, client: httpx.AsyncClient, body: dict[str, Any], provider: str
 ) -> Decision:
     evs = events(body, provider)
@@ -274,13 +295,9 @@ async def decide(
     if cfg.route_mode == "random":
         coin: Tier = "lite" if random.random() < cfg.random_lite_share else "frontier"  # noqa: S311
         return Decision(coin, "random", state)
-    started = time.perf_counter()
-    try:
-        p_easy = await ask_judge(cfg, client, state)
-    except Exception as exc:
-        ms = (time.perf_counter() - started) * 1000.0
-        return Decision("frontier", "judge_error", state, judge_ms=ms, judge_error=repr(exc))
-    ms = (time.perf_counter() - started) * 1000.0
+    p_easy, ms, err = await _judge(cfg, client, state)
+    if p_easy is None:
+        return Decision("frontier", "judge_error", state, judge_ms=ms, judge_error=err)
     tier: Tier = "lite" if p_easy > cfg.easy_threshold else "frontier"
     # Hybrid: a confident judge sends the step to the lite tier; otherwise the frontier triages.
     triage = tier == "frontier" and cfg.route_mode == "hybrid"

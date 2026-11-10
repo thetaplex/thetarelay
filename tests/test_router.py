@@ -1561,3 +1561,56 @@ async def test_guard_and_escalate_on_stop_together(tmp_path: Path) -> None:
     app, _ = _guard_app(tmp_path, run, lite_guard="writes", escalate_on_stop=True)
     resp = await _post_openai(app, body)
     assert (resp.headers["x-thetarelay-tier"], resp.content) == ("lite", run)
+
+
+def _lines(tmp_path: Path) -> list[dict[str, Any]]:
+    return [json.loads(x) for x in (tmp_path / "turns.jsonl").read_text().splitlines()]
+
+
+def test_shadow_share_defaults_off_and_is_validated() -> None:
+    assert RouterConfig().shadow_share == 0.0
+    with pytest.raises(ValueError, match="shadow_share"):
+        RouterConfig(shadow_share=1.5)
+
+
+@pytest.mark.asyncio
+async def test_judge_skipped_without_shadow_share(tmp_path: Path) -> None:
+    app, calls = _app(tmp_path, 0.9, route_mode="frontier")
+    await _post(app, EASY)
+    assert not any("judge.test" in c[0] for c in calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("overrides", "tier", "reason"),
+    [
+        ({"route_mode": "frontier"}, "frontier", "forced_frontier"),
+        ({"route_mode": "lite"}, "lite", "forced_lite"),
+        ({"route_mode": "random", "random_lite_share": 1.0}, "lite", "random"),
+        ({"route_mode": "triage"}, "frontier", "triage"),
+        ({"lite_max_request_chars": 10}, "frontier", "too_large_for_lite"),
+    ],
+)
+async def test_judge_asked_in_every_mode_with_shadow_share(
+    tmp_path: Path, overrides: dict[str, Any], tier: str, reason: str
+) -> None:
+    app, calls = _app(tmp_path, 0.2, shadow_share=0.1, **overrides)
+    resp = await _post(app, EASY)
+    assert (resp.headers["x-thetarelay-tier"], resp.headers["x-thetarelay-reason"]) == (
+        tier,
+        reason,
+    )
+    assert any("judge.test" in c[0] for c in calls)
+    line = _lines(tmp_path)[0]
+    assert line["p_easy"] == pytest.approx(0.2)
+    assert line["judge_ms"] is not None
+
+
+@pytest.mark.asyncio
+async def test_judge_error_in_frontier_mode_is_recorded(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, None, route_mode="frontier", shadow_share=0.1)
+    resp = await _post(app, EASY)
+    assert resp.headers["x-thetarelay-reason"] == "forced_frontier"
+    line = _lines(tmp_path)[0]
+    assert line["judge_error"]
+    assert line["p_easy"] is None
