@@ -20,7 +20,7 @@ thetarelay proxy
 
 | Frontier model | Result |
 |---|---|
-| OpenAI (GPT-6.1 Terra, GPT-6 Astra) | No saving. These models do not hand steps to the lite model. |
+| OpenAI (GPT-6.1 Terra, GPT-6 Astra) | No saving. These models do not hand steps to the lite model, so the default route mode is `judge`, which avoids the triage cost. |
 | Low-cost models such as GPT-6.1 Terra | Little to save. Use the frontier model without ThetaRelay. |
 
 Small local lite models, for example `gemma4:e4b`, often stop the agent. ThetaRelay then asks

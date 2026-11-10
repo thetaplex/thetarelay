@@ -95,12 +95,18 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
+    note = (
+        " (OpenAI frontier models do not hand steps to the lite tier, so the triage step is off)"
+        if cfg.route_mode_reason == "openai frontier model"
+        else ""
+    )
     print(
         f"thetarelay listening on http://{cfg.host}:{cfg.port}\n"
         f"  judge:    {cfg.judge_model} at {cfg.judge_url} "
         f"(lite if P(easy) > {cfg.easy_threshold})\n"
         f"  lite:     {cfg.lite_model} at {cfg.lite_base_url}\n"
         f"  frontier: {cfg.frontier_model} at {cfg.frontier_base_url}\n"
+        f"  route mode: {cfg.route_mode}{note}\n"
         f"  turn log: {cfg.turn_log_path or 'off'}   debug: {'on' if cfg.debug else 'off'}",
         file=sys.stderr,
     )
