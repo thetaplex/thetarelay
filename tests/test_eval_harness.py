@@ -263,7 +263,14 @@ def test_app_arm_env(tmp_path: Path) -> None:
 
 def test_app_report_pairs_by_spec_and_run() -> None:
     rows = [
-        {"arm": "pi", "run": 0, "hidden_passed": 34, "hidden_failed": 0, "api_cost_usd": 2.0},
+        {
+            "spec": "bookmarks",
+            "arm": "pi",
+            "run": 0,
+            "hidden_passed": 34,
+            "hidden_failed": 0,
+            "api_cost_usd": 2.0,
+        },
         {"spec": "todo", "arm": "pi-hybrid", "run": 0, "hidden_passed": 5, "hidden_failed": 1},
         {
             "spec": "bookmarks",
@@ -287,3 +294,48 @@ def test_app_report_pairs_by_spec_and_run() -> None:
     assert "(1 pairs, 1 unpaired)" in out
     claude = next(ln for ln in out.splitlines() if ln.startswith("claude"))
     assert "$3.000" in claude
+
+
+def _fake_builds(monkeypatch: pytest.MonkeyPatch, specs: Path, results: Path) -> list[str]:
+    monkeypatch.setattr(app, "SPECS", specs)
+    monkeypatch.setattr(app, "RESULTS", results)
+    built: list[str] = []
+
+    def fake_build(work: Path, out: Path, *_: Any) -> dict[str, Any]:
+        built.append(out.name)
+        return {"status": "ok", "seconds": 1.0, "api_cost_usd": 7.0}
+
+    monkeypatch.setattr(app, "run_claude", fake_build)
+    monkeypatch.setattr(app, "run_pi", fake_build)
+    monkeypatch.setattr(app, "grade", lambda *_: {"hidden_passed": 1, "hidden_failed": 0})
+    return built
+
+
+def test_old_rows_without_spec_are_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    specs, results = tmp_path / "specs", tmp_path / "results"
+    _specs(specs, "bookmarks")
+    built = _fake_builds(monkeypatch, specs, results)
+    results.mkdir()
+    old = {"arm": "pi", "run": 0, "hidden_passed": 34, "hidden_failed": 0, "api_cost_usd": 99.0}
+    (results / "builds.jsonl").write_text(json.dumps(old) + "\n")
+    app.run(argparse.Namespace(runs=1, arms="pi-hybrid", specs=""))
+    assert built == ["pi-hybrid-0"]
+    assert "ignoring 1 old" in capsys.readouterr().out
+    app.report(argparse.Namespace())
+    out = capsys.readouterr().out
+    assert "ignoring 1 old" in out
+    assert "99" not in out
+    assert "$7.000" in next(ln for ln in out.splitlines() if ln.startswith("pi-hybrid"))
+
+
+def test_unknown_arm_fails_before_any_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    specs, results = tmp_path / "specs", tmp_path / "results"
+    _specs(specs, "a")
+    built = _fake_builds(monkeypatch, specs, results)
+    with pytest.raises(SystemExit, match="pi-hybird"):
+        app.run(argparse.Namespace(runs=1, arms="claude,pi-hybird", specs=""))
+    assert built == []

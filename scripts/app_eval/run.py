@@ -83,6 +83,15 @@ def canonical_arm(arm: str) -> str:
     return "pi-hybrid" if arm == "pi" else arm
 
 
+def load_builds() -> list[dict[str, Any]]:
+    """Rows of builds.jsonl that have a spec; older rows did not record their route mode."""
+    log = RESULTS / "builds.jsonl"
+    rows = list(map(json.loads, log.read_text().splitlines())) if log.exists() else []
+    if old := sum("spec" not in r for r in rows):
+        print(f"ignoring {old} old rows without a spec in {log}", flush=True)
+    return [r for r in rows if "spec" in r]
+
+
 def arm_env(arm: str, spec_results: Path) -> dict[str, str] | None:
     """Proxy environment for a pi arm; None when a random arm's routed arm has no turn logs."""
     base = canonical_arm(arm).removeprefix("pi-")
@@ -285,9 +294,11 @@ def grade(work: Path, spec: Path) -> dict[str, Any]:
 def run(args: argparse.Namespace) -> None:
     RESULTS.mkdir(exist_ok=True)
     log = RESULTS / "builds.jsonl"
-    rows = list(map(json.loads, log.read_text().splitlines())) if log.exists() else []
-    done = {(r.get("spec", "bookmarks"), canonical_arm(r["arm"]), r["run"]) for r in rows}
+    done = {(r["spec"], canonical_arm(r["arm"]), r["run"]) for r in load_builds()}
     arms = [canonical_arm(a) for a in args.arms.split(",")]
+    for arm in arms:  # fail on a typo now, not after a 30-minute build
+        if arm != "claude":
+            arm_env(arm, RESULTS)
     for spec in select_specs(args.specs):
         spec_results = RESULTS / spec.name
         spec_results.mkdir(exist_ok=True)
@@ -342,14 +353,13 @@ def run(args: argparse.Namespace) -> None:
 def build_report(builds: list[dict[str, Any]], turns: dict[str, list[dict[str, Any]]]) -> str:
     """The routing eval's report over builds, pairing routed and random arms by (spec, run).
 
-    A build passes when all its hidden tests pass. Rows from before specs existed count as
-    `bookmarks`, and arm `pi` as `pi-hybrid`.
+    A build passes when all its hidden tests pass. Arm `pi` counts as `pi-hybrid`.
     """
     attempts = [
         {
             "arm": canonical_arm(b["arm"]),
             "run": b["run"],
-            "exercise": b.get("spec", "bookmarks"),
+            "exercise": b["spec"],
             "passed": b["hidden_passed"] > 0 and b["hidden_failed"] == 0,
             "cost_usd": b.get("api_cost_usd") or 0,
         }
@@ -360,7 +370,7 @@ def build_report(builds: list[dict[str, Any]], turns: dict[str, list[dict[str, A
 
 
 def report(_: argparse.Namespace) -> None:
-    builds = [json.loads(ln) for ln in (RESULTS / "builds.jsonl").read_text().splitlines()]
+    builds = load_builds()
     turns: dict[str, list[dict[str, Any]]] = {}
     for p in RESULTS.glob("*/turns-*.jsonl"):
         arm, run_no = p.stem.removeprefix("turns-").rsplit("-", 1)
