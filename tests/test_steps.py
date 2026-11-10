@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from thetarelay.steps import classify, reply_group
+from thetarelay.steps import classify, last_program, reply_group
 
 
 def bash(command: str) -> tuple[str, str]:
@@ -253,3 +253,18 @@ def test_reply_group_text_only_and_unparsable() -> None:
         ]
     )
     assert reply_group(empty) == "read"
+
+
+@pytest.mark.parametrize(
+    ("command", "program"),
+    [
+        ("rg foo", "rg"),
+        ("cat a | /usr/bin/grep x", "grep"),
+        ("rg foo 2>/dev/null", "rg"),
+        ("ls\nFOO=1 rtk proxy egrep x", "egrep"),
+        ("rg 'unclosed", None),
+        ("", None),
+    ],
+)
+def test_last_program(command: str, program: str | None) -> None:
+    assert last_program(command) == program

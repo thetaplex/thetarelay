@@ -133,6 +133,28 @@ def shell_group(command: str) -> Group:
     return most_severe(groups) or "read"
 
 
+def last_program(command: str) -> str | None:
+    """Program name of the last part of a shell command (None: empty or unparsable)."""
+    try:
+        tokens, _ = _tokenize(command)
+    except _Unparsable:
+        return None
+    words: list[str] = []
+    redirect = False
+    for kind, text in tokens:
+        if kind == "op":
+            if text in _SEPARATORS:  # newlines are already `;`
+                words = []
+            redirect = text not in _SEPARATORS
+        elif redirect:  # the redirect's target, not a program
+            redirect = False
+        else:
+            words.append(text)
+    while words and ("=" in words[0] or words[0] == "rtk"):
+        words = words[2:] if words[:2] == ["rtk", "proxy"] else words[1:]
+    return PurePosixPath(words[0]).name if words else None
+
+
 def _program_group(words: list[str]) -> Group:
     while words and _ASSIGNMENT.match(words[0]):
         words = words[1:]  # FOO=bar cmd

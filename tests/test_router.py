@@ -794,7 +794,7 @@ def test_failing_test_summary_is_shown_to_the_judge() -> None:
         ("test result: FAILED. 3 passed; 1 failed; 0 ignored", True),
         ("panicked at expected\ntest result: ok. 3 passed; 0 failed; 0 ignored", False),
         ("1 error in 0.3s", True),
-        ("3 failed, 1 passed\nrerun:\n4 passed in 1.0s", False),  # the last summary wins
+        ("3 failed, 1 passed in 2.0s\nrerun:\n4 passed in 1.0s", False),  # the last summary wins
     ],
 )
 def test_test_runner_summaries(output: str, failed: bool) -> None:
@@ -857,3 +857,27 @@ def test_non_string_ids_are_unlinked(build: Any, provider: str) -> None:
     body = build([(["a"], "bash", {"command": "ls"})], [{"id": "a"}])
     (res,) = [e for e in events(body, provider) if e.kind == "result"]
     assert (res.group, res.command) == ("irreversible", None)
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "spawned child, exit code 0\nTraceback (most recent call last):\nValueError: x",
+        "Traceback (most recent call last):\nRuntimeError: boom\nprocessed 3 passed items",
+        "Error: Cannot find module x\n12 passed",
+        "Traceback (most recent call last):\nKeyError: 'a'\nOK",
+    ],
+)
+def test_signals_inside_a_line_do_not_mask_a_failure(output: str) -> None:
+    assert _sh("python app.py", output).failed
+
+
+def test_unittest_ok_after_ran_line_passes() -> None:
+    assert not _sh(
+        "python -m unittest", "Error: expected\nRan 3 tests in 0.0s\n\nOK (skipped=1)"
+    ).failed
+
+
+def test_read_tool_text_about_exit_codes_is_not_a_failure() -> None:
+    assert not _result("read", {"path": "README.md"}, "Returns exit code 2 on bad input.").failed
+    assert not _result("read", {"path": "a.txt"}, "Command exited with code 2").failed

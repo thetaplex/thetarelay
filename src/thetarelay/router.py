@@ -17,7 +17,7 @@ from typing import Any, Literal
 import httpx
 
 from .config import RouterConfig
-from .steps import _SEPARATORS, Group, _tokenize, _Unparsable, classify
+from .steps import Group, classify, last_program
 
 Tier = Literal["lite", "frontier"]
 
@@ -42,13 +42,16 @@ JUDGE_QUESTION = {
 _FAILURE = re.compile(
     r"\b(FAILED|FAILURES?|Traceback|AssertionError|panicked|Exception|[Ee]rror:|non-zero exit)"
 )
+# Structured signals match a whole line (stripped of pytest's `=` framing), never part of one.
 # Pi: `Command exited with code N` (only when N is not 0); others: `exit code N`, `exit status N`.
-_EXIT = re.compile(r"Command exited with code (\d+)|\b(?i:exit (?:code|status)):? (\d+)")
-# Test runner summaries: pytest, unittest, Jest/Vitest, cargo.
+_EXIT = re.compile(r"^(?:Command exited with code (\d+)|(?i:exit (?:code|status)):? (\d+))$")
+# Test runner summaries: pytest (always ends `in Ns`), unittest, Jest, cargo.
 _SUMMARY = re.compile(
-    r"\b\d+ (passed|failed|errors?)\b|^FAILED \((failures|errors)=|^OK( \(.*\))?$"
-    r"|\bTests:\s+\d|\btest result: (ok|FAILED)\b"
+    r"^(\d+ (passed|failed|errors?|skipped|warnings?|deselected|xfailed|xpassed)[, ]*)+"
+    r" in [\d.]+s\b.*$|^FAILED \((failures|errors)=|^Tests:\s+\d|^test result: (ok|FAILED)\."
 )
+_UNITTEST_OK = re.compile(r"^OK( \(.*\))?$")
+_UNITTEST_RAN = re.compile(r"^Ran \d+ tests?\b")
 _SUMMARY_FAILED = re.compile(r"\b[1-9]\d* (failed|errors?)\b|FAILED")
 _SEARCHES = frozenset({"rg", "grep", "egrep", "fgrep"})
 _REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
@@ -112,47 +115,32 @@ def _link(calls: dict[str, tuple[str, Any]], call_id: Any) -> tuple[Group, str |
     return classify(name, calls[call_id][1]), cmd if isinstance(cmd, str) else None
 
 
-def _last_program(command: str | None) -> str | None:
-    """Program of the last part of a shell command (None: no command or unparsable)."""
-    try:
-        tokens, _ = _tokenize(command or "")
-    except _Unparsable:
-        return None
-    words: list[str] = []
-    redirect = False
-    for kind, text in tokens:
-        if kind == "op":
-            if text in _SEPARATORS:  # newlines are already `;`
-                words = []
-            redirect = text not in _SEPARATORS
-        elif redirect:  # the redirect's target, not a program
-            redirect = False
-        else:
-            words.append(text)
-    while words and ("=" in words[0] or words[0] == "rtk" or words[:2] == ["rtk", "proxy"]):
-        words = words[2:] if words[:2] == ["rtk", "proxy"] else words[1:]
-    return words[0].rsplit("/", 1)[-1] if words else None
-
-
 def _failure(text: str, is_error: bool, group: Group, command: str | None) -> str | None:
     """The line that decides the step failed, or None. The first signal present decides:
     the error flag, an exit status, a test summary, then keywords (not for read steps)."""
-    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
-    exits = [(ln, int(m[1] or m[2])) for ln in lines if (m := _EXIT.search(ln))]
+    lines = [s for ln in text.splitlines() if (s := ln.strip(" \t="))]
+    # A non-shell read tool reports no exit status: its text is file content.
+    shell = not (group == "read" and command is None)
+    exits = [(ln, int(m[1] or m[2])) for ln in lines if shell and (m := _EXIT.match(ln))]
     keyword = next((ln for ln in lines if _FAILURE.search(ln)), None)
     if is_error:
         return next((ln for ln, code in exits if code), keyword or (lines[0] if lines else ""))
     if exits:
         line, code = exits[-1]
-        if code == 0 or (code == 1 and group == "read" and _last_program(command) in _SEARCHES):
+        search = command is not None and last_program(command) in _SEARCHES
+        if code == 0 or (code == 1 and group == "read" and search):
             return None
         return line
     if group == "read":
         return None
-    summaries = [ln for ln in lines if _SUMMARY.search(ln)]
+    ran = [i for i, ln in enumerate(lines) if _UNITTEST_RAN.match(ln)]
+    summaries = [
+        ln
+        for i, ln in enumerate(lines)
+        if _SUMMARY.match(ln) or (_UNITTEST_OK.match(ln) and ran and ran[0] < i)
+    ]
     if summaries:
-        last = summaries[-1].strip("= ")  # pytest frames its summary in ====
-        return last if _SUMMARY_FAILED.search(last) else None
+        return summaries[-1] if _SUMMARY_FAILED.search(summaries[-1]) else None
     return keyword
 
 
