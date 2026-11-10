@@ -57,7 +57,7 @@ PI_ENV = {
 
 def fresh_workdir(name: str) -> Path:
     work = Path(tempfile.mkdtemp(prefix=f"app-eval-{name}-"))
-    shutil.copytree(HERE / "starter", work, dirs_exist_ok=True)
+    shutil.copytree(HERE / "specs" / "bookmarks" / "starter", work, dirs_exist_ok=True)
     return work
 
 
@@ -213,7 +213,7 @@ def run_pi(work: Path, out: Path) -> dict[str, Any]:
 def grade(work: Path) -> dict[str, Any]:
     hidden = work / "tests_hidden"
     hidden.mkdir(exist_ok=True)
-    shutil.copy(HERE / "hidden_tests" / "test_hidden_api.py", hidden)
+    shutil.copy(HERE / "specs" / "bookmarks" / "hidden_tests" / "test_hidden_api.py", hidden)
 
     def pytest(target: str) -> tuple[int, int]:
         try:
