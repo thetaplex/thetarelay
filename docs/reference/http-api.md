@@ -41,8 +41,8 @@ contains prompt text, so keep it private. It never contains request headers or A
 | `p_easy`, `threshold`, `judge_ms`, `judge_error` | The judge's answer, the threshold, the judge time and the judge error |
 | `judge_state` | The summary that the judge read |
 | `status`, `upstream_ms` | Status code and time of the model request |
-| `input_tokens`, `cached_tokens`, `cache_write_tokens`, `output_tokens`, `cost_usd` | Usage from the response (both streamed and non-streamed). `cost_usd` is the cost that OpenRouter reports. `cache_write_tokens` is `null` when the provider does not report it. |
+| `input_tokens`, `cached_tokens`, `cache_write_tokens`, `output_tokens`, `cost_usd` | Usage from the response (both streamed and non-streamed). `cost_usd` is the cost that OpenRouter reports. `cache_write_tokens` is `null` when the provider does not report it. `input_tokens`, `output_tokens` and `cost_usd` are absent on error replies. |
 | `triage_cached_tokens`, `triage_cache_write_tokens` | Cache read and write tokens of the frontier triage call. Present only on triage requests that the frontier model handed back (`easy`). |
 | `step_groups` | The step groups (`read`, `run`, `write`, `irreversible`) of the tool calls in the reply that reached the agent, in order. `[]` for a text-only reply or a status other than 200; `["irreversible"]` when a tool call signals but cannot be read. |
 | `stream_cut` | `true` when a streamed reply ended early (upstream error or client disconnect). `step_groups` then comes from the bytes already relayed, and is `["irreversible"]` when a tool call had started. Absent when the stream finished. |
-| `triage_verdict` | `easy` if the frontier model handed the step to the lite tier, `did_step` if it answered itself. Absent when the request was not triaged. |
+| `triage_verdict` | `easy` if the frontier model handed the step to the lite tier, `did_step` if it answered itself. Absent when the request was not triaged or the triage reply had a status other than 200. |

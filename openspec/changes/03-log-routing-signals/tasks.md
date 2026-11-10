@@ -6,14 +6,14 @@ Spec: `specs/turn-log/spec.md`. Code in `src/thetarelay/proxy.py`; tests in
 
 ## Task 1: Cache writes and triage verdict
 
-- [ ] 1.1 Write failing tests for every scenario under "Cache writes" and "Triage verdict", for
+- [x] 1.1 Write failing tests for every scenario under "Cache writes" and "Triage verdict", for
   streamed and non-streamed replies; verify they fail with `just test tests/test_router.py`
-- [ ] 1.2 In `_usage`, add `cache_write_tokens`: Anthropic `usage.cache_creation_input_tokens`;
+- [x] 1.2 In `_usage`, add `cache_write_tokens`: Anthropic `usage.cache_creation_input_tokens`;
   OpenAI `usage.prompt_tokens_details.cache_write_tokens`; `None` when absent. `StreamUsage`
   already merges streamed usage, so streamed Anthropic replies need no new parsing. In `route`,
   set `record["triage_verdict"]` to `"easy"` or `"did_step"` from the `_triage` result; never
   set it when the request was not triaged or triage raised. Verify the 1.1 tests pass
-- [ ] 1.3 Add both fields to the Turn log table in `docs/reference/http-api.md`
+- [x] 1.3 Add both fields to the Turn log table in `docs/reference/http-api.md`
 
 ## Task 2: Step groups of the reply
 

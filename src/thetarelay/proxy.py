@@ -119,7 +119,8 @@ def _outbound(
 
 
 def _usage(provider: str, data: dict[str, Any]) -> dict[str, Any]:
-    u = data.get("usage") or {}
+    u = data.get("usage")
+    u = u if isinstance(u, dict) else {}
     if provider == "anthropic":
         return {
             "input_tokens": u.get("input_tokens"),
@@ -128,13 +129,12 @@ def _usage(provider: str, data: dict[str, Any]) -> dict[str, Any]:
             "output_tokens": u.get("output_tokens"),
             "cost_usd": u.get("cost"),
         }
-    details = u.get("prompt_tokens_details") or {}
+    details = u.get("prompt_tokens_details")
+    details = details if isinstance(details, dict) else {}
     return {
         "input_tokens": u.get("prompt_tokens"),
-        "cached_tokens": details.get("cached_tokens") if isinstance(details, dict) else None,
-        "cache_write_tokens": (
-            details.get("cache_write_tokens") if isinstance(details, dict) else None
-        ),
+        "cached_tokens": details.get("cached_tokens"),
+        "cache_write_tokens": details.get("cache_write_tokens"),
         "output_tokens": u.get("completion_tokens"),
         "cost_usd": u.get("cost"),
     }
@@ -144,10 +144,13 @@ def _step_groups(status: int, raw: bytes) -> list[str]:
     """Step groups of the tool calls in a reply; `irreversible` if a call cannot be read."""
     if status != 200:
         return []
-    calls = tool_calls(raw)
-    if calls:
-        return [classify(name, args) for name, args in calls]
-    return ["irreversible"] if signals_tool_call(raw) else []
+    try:
+        calls = tool_calls(raw)
+        if calls:
+            return [classify(name, args) for name, args in calls]
+        return ["irreversible"] if signals_tool_call(raw) else []
+    except Exception:  # a reply we cannot read must not break the proxy
+        return ["irreversible"]
 
 
 def _cut_step_groups(seen: bytes) -> list[str]:
@@ -472,7 +475,8 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                 )
             except httpx.TransportError as exc:
                 return _bad_gateway(exc)
-            record["triage_verdict"] = "easy" if easy else "did_step"
+            if triaged.status_code == 200:
+                record["triage_verdict"] = "easy" if easy else "did_step"
             if easy:
                 # The frontier model hands the step over; the lite tier gets the original body.
                 triaged = None
@@ -543,7 +547,6 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                     logger.warning("Upstream stream interrupted: %s", exc)
                     record["status"] = 502
                 finally:
-                    await upstream.aclose()
                     if usage.usage:
                         record.update(_usage(provider, {"usage": usage.usage}))
                     record.setdefault("status", upstream.status_code)
@@ -556,6 +559,7 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                         record["step_groups"] = _cut_step_groups(bytes(seen))
                     record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
                     recorder.record(record)
+                    await upstream.aclose()
 
             resp_headers = {
                 k: v for k, v in upstream.headers.items() if k.lower() not in _DROP_RESPONSE_HEADERS

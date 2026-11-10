@@ -1217,3 +1217,43 @@ async def test_normal_stream_has_no_stream_cut(tmp_path: Path) -> None:
     await _post(_reply_app(tmp_path, sse, "text/event-stream"), {**EASY, "stream": True})
     line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
     assert "stream_cut" not in line
+
+
+NULL_NAME = json.dumps(
+    {
+        "content": [{"type": "tool_use", "id": "t", "name": None, "input": {}}],
+        "stop_reason": "tool_use",
+    }
+).encode()
+
+
+@pytest.mark.asyncio
+async def test_malformed_tool_call_does_not_break_the_reply(tmp_path: Path) -> None:
+    resp = await _post(_reply_app(tmp_path, NULL_NAME), EASY)
+    assert resp.status_code == 200
+    assert resp.content == NULL_NAME
+    assert len((tmp_path / "turns.jsonl").read_text().splitlines()) == 1
+    assert _groups(tmp_path) == ["irreversible"]
+
+
+@pytest.mark.asyncio
+async def test_malformed_tool_call_in_a_stream_is_still_logged(tmp_path: Path) -> None:
+    sse = b"data: " + NULL_NAME + b"\n\n"
+    resp = await _post(_reply_app(tmp_path, sse, "text/event-stream"), {**EASY, "stream": True})
+    assert resp.status_code == 200
+    assert resp.content == sse
+    assert len((tmp_path / "turns.jsonl").read_text().splitlines()) == 1
+    assert _groups(tmp_path) == ["irreversible"]
+
+
+@pytest.mark.asyncio
+async def test_triage_error_reply_has_no_verdict(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, None, route_mode="triage")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"error": "slow down"})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await _post_openai(app, TOOL_RUN)
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    assert "triage_verdict" not in line

@@ -34,7 +34,7 @@ None.
 
 - `src/thetarelay/proxy.py` (usage extraction, record), `docs/reference/http-api.md`.
 - Step groups need the reply's tool calls, so streamed replies on the frontier tier are parsed
-  as they pass through (no extra buffering).
+  buffered as they pass and parsed when the stream ends, with no delay to any chunk.
 - Depends on `01-add-step-classification`.
 
 ## Out of scope
