@@ -548,10 +548,8 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
 
         async def lite_shadow() -> tuple[int, bytes]:
             # The lite tier's answer to the same step, never shown to the agent.
+            # Same request as the lite tier gets; `post` buffers a streamed reply whole.
             url, out, hdrs = _outbound(cfg, body, in_headers, "lite", provider)
-            if out.get("stream"):
-                out["stream"] = False
-                out.pop("stream_options", None)  # only valid on streamed requests
             async with asyncio.timeout(cfg.lite_timeout_seconds):
                 resp = await client.post(
                     url + query, content=json.dumps(out).encode(), headers=hdrs
@@ -563,6 +561,7 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             decision.tier == "frontier"
             and not decision.triage
             and cfg.shadow_share > 0
+            and cfg.turn_log_path  # a shadow exists only to be logged
             and random.random() < cfg.shadow_share  # noqa: S311
         ):
             shadow = track(asyncio.create_task(lite_shadow(), name="shadow"))

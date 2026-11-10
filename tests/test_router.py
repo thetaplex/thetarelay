@@ -78,8 +78,13 @@ def _app(
         judge_url="http://judge.test/v1/systemone",
         frontier_api_key="sk-frontier",
         enable_headroom_middleware=False,
-        turn_log_path=str(tmp_path / "turns.jsonl"),
-        **{"escalate_on_stop": False, "route_mode": "judge", "stay_requests": 6, **overrides},
+        **{
+            "turn_log_path": str(tmp_path / "turns.jsonl"),
+            "escalate_on_stop": False,
+            "route_mode": "judge",
+            "stay_requests": 6,
+            **overrides,
+        },
     )
     app = create_app(cfg)
     calls: list[tuple[str, dict[str, Any], dict[str, str]]] = []
@@ -1755,16 +1760,16 @@ async def test_shadow_follows_lite_rules_and_leaves_frontier_body_alone(
     app, calls = _shadow_app(
         tmp_path, frontier=sse, content_type="text/event-stream", lite_api_key="sk-lite"
     )
-    body = {**EASY, "stream": True}
+    body = {**EASY, "stream": True, "stream_options": {"include_usage": True}}
     resp = await _post(app, body)
     assert resp.content == sse
     await _drain(app)
     ((_, lite_body, lite_headers),) = _lite_calls(calls)
+    # Exactly the lite-tier body: still streamed, as the client asked.
     assert lite_body == {
         **body,
         "model": "anthropic/claude-haiku-5.5",
         "thinking": {"type": "disabled"},
-        "stream": False,
     }
     assert lite_headers["authorization"] == "Bearer sk-lite"
     assert "x-api-key" not in lite_headers
@@ -1949,7 +1954,8 @@ async def test_shadow_one_line_per_request_in_both_formats(
 ) -> None:
     _coin(monkeypatch, 0.0)
     ctype = "text/event-stream" if stream else "application/json"
-    lite = SRC_READ if provider == "anthropic" else json.dumps(OAI_READ).encode()
+    # The shadow is streamed when the client streams; its SSE reply is read like the agent's.
+    lite = frontier
     gate = asyncio.Event()
     app, calls = _shadow_app(tmp_path, frontier=frontier, lite=lite, gate=gate, content_type=ctype)
     post = _post if provider == "anthropic" else _post_openai
@@ -1963,7 +1969,7 @@ async def test_shadow_one_line_per_request_in_both_formats(
     assert lines[0]["shadow"]["match"] is True
     assert lines[0]["shadow"]["frontier"][0]["target"] == "src/app.py"
     assert lines[0]["step_groups"] == ["read"]
-    assert _lite_calls(calls)[0][1]["stream"] is False
+    assert _lite_calls(calls)[0][1]["stream"] is stream
 
 
 async def test_shadow_with_cut_stream_and_bad_gateway_still_one_line(
@@ -2055,3 +2061,14 @@ async def test_shadow_not_sent_for_escalated_requests(
     assert "lite_" in resp.headers["x-thetarelay-reason"]
     assert len(_lite_calls(calls)) == 1  # the lite try itself, no second shadow request
     assert "shadow" not in _lines(tmp_path)[0]
+
+
+async def test_shadow_skipped_without_a_turn_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coin(monkeypatch, 0.0)
+    app, calls = _shadow_app(tmp_path, shadow_share=1.0, turn_log_path="")
+    resp = await _post(app, EASY)
+    assert resp.content == SRC_READ
+    await _drain(app)
+    assert not _lite_calls(calls)  # a shadow nobody logs would only cost money
