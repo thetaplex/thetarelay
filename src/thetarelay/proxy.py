@@ -124,6 +124,7 @@ def _usage(provider: str, data: dict[str, Any]) -> dict[str, Any]:
         return {
             "input_tokens": u.get("input_tokens"),
             "cached_tokens": u.get("cache_read_input_tokens"),
+            "cache_write_tokens": u.get("cache_creation_input_tokens"),
             "output_tokens": u.get("output_tokens"),
             "cost_usd": u.get("cost"),
         }
@@ -131,6 +132,9 @@ def _usage(provider: str, data: dict[str, Any]) -> dict[str, Any]:
     return {
         "input_tokens": u.get("prompt_tokens"),
         "cached_tokens": details.get("cached_tokens") if isinstance(details, dict) else None,
+        "cache_write_tokens": (
+            details.get("cache_write_tokens") if isinstance(details, dict) else None
+        ),
         "output_tokens": u.get("completion_tokens"),
         "cost_usd": u.get("cost"),
     }
@@ -448,6 +452,7 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                 )
             except httpx.TransportError as exc:
                 return _bad_gateway(exc)
+            record["triage_verdict"] = "easy" if easy else "did_step"
             if easy:
                 # The frontier model hands the step over; the lite tier gets the original body.
                 triaged = None

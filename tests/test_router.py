@@ -896,3 +896,85 @@ def test_unittest_ok_after_ran_line_passes() -> None:
 def test_read_tool_text_about_exit_codes_is_not_a_failure() -> None:
     assert not _result("read", {"path": "README.md"}, "Returns exit code 2 on bad input.").failed
     assert not _result("read", {"path": "a.txt"}, "Command exited with code 2").failed
+
+
+def _last_line(tmp_path: Path) -> dict[str, Any]:
+    line: dict[str, Any] = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    return line
+
+
+@pytest.mark.asyncio
+async def test_log_cache_write_tokens_openai(tmp_path: Path) -> None:
+    reply = {**OAI_TOOL, "usage": {"prompt_tokens_details": {"cache_write_tokens": 1200}}}
+    app, _ = _triage_app(tmp_path, json.dumps(reply).encode())
+    await _post_openai(app, TOOL_RUN)
+    assert _last_line(tmp_path)["cache_write_tokens"] == 1200
+
+
+@pytest.mark.asyncio
+async def test_log_cache_write_tokens_openai_streamed(tmp_path: Path) -> None:
+    hard = _sse(
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c2"}]}}]},
+        {"choices": [], "usage": {"prompt_tokens_details": {"cache_write_tokens": 1200}}},
+    )
+    app, _ = _triage_app(tmp_path, hard, "text/event-stream")
+    await _post_openai(app, {**TOOL_RUN, "stream": True})
+    assert _last_line(tmp_path)["cache_write_tokens"] == 1200
+
+
+@pytest.mark.asyncio
+async def test_log_cache_write_tokens_null_when_not_reported(tmp_path: Path) -> None:
+    app, _ = _triage_app(tmp_path, json.dumps(OAI_TOOL).encode())
+    await _post_openai(app, TOOL_RUN)
+    assert _last_line(tmp_path)["cache_write_tokens"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_log_cache_write_tokens_anthropic(tmp_path: Path, stream: bool) -> None:
+    usage = {"cache_read_input_tokens": 0, "cache_creation_input_tokens": 48000}
+    app, _ = _app(tmp_path, 0.0)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "judge.test" in str(request.url):
+            return httpx.Response(
+                200, json={"answers": {"route": {"probabilities": {"easy": 0.0, "hard": 1.0}}}}
+            )
+        if stream:
+            return httpx.Response(
+                200,
+                content=_sse({"type": "message_start", "message": {"usage": usage}}),
+                headers={"content-type": "text/event-stream"},
+            )
+        return httpx.Response(200, json={"content": [], "usage": usage})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await _post(app, {**EASY, "stream": stream})
+    line = _last_line(tmp_path)
+    assert line["cached_tokens"] == 0
+    assert line["cache_write_tokens"] == 48000
+
+
+@pytest.mark.asyncio
+async def test_log_triage_verdict_easy(tmp_path: Path) -> None:
+    app, _ = _triage_app(tmp_path, json.dumps(OAI_EASY).encode())
+    await _post_openai(app, TOOL_RUN)
+    assert _last_line(tmp_path)["triage_verdict"] == "easy"
+
+
+@pytest.mark.asyncio
+async def test_log_triage_verdict_did_step(tmp_path: Path) -> None:
+    app, _ = _triage_app(tmp_path, json.dumps(OAI_TOOL).encode())
+    await _post_openai(app, TOOL_RUN)
+    assert _last_line(tmp_path)["triage_verdict"] == "did_step"
+    hard = _sse({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c2"}]}}]})
+    app, _ = _triage_app(tmp_path, hard, "text/event-stream")
+    await _post_openai(app, {**TOOL_RUN, "stream": True})
+    assert _last_line(tmp_path)["triage_verdict"] == "did_step"
+
+
+@pytest.mark.asyncio
+async def test_log_no_triage_verdict_when_not_triaged(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, 0.9)
+    await _post(app, EASY)
+    assert "triage_verdict" not in _last_line(tmp_path)
