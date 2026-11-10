@@ -45,11 +45,13 @@ _FAILURE = re.compile(
 # Structured signals match a whole line (stripped of pytest's `=` framing), never part of one.
 # Pi: `Command exited with code N` (only when N is not 0); others: `exit code N`, `exit status N`.
 _EXIT = re.compile(r"^(?:Command exited with code (\d+)|(?i:exit (?:code|status)):? (\d+))$")
-# Test runner summaries: pytest (always ends `in Ns`), unittest, Jest, cargo.
-_SUMMARY = re.compile(
+# Test runner summaries: pytest, unittest, Jest, cargo. A pytest line without failures must
+# end `in Ns` to count, so a stray `12 passed` cannot mask a keyword failure.
+_PYTEST = re.compile(
     r"^(\d+ (passed|failed|errors?|skipped|warnings?|deselected|xfailed|xpassed)[, ]*)+"
-    r" in [\d.]+s\b.*$|^FAILED \((failures|errors)=|^Tests:\s+\d|^test result: (ok|FAILED)\."
+    r"( in [\d.]+s\b.*)?$"
 )
+_SUMMARY = re.compile(r"^FAILED \((failures|errors)=|^Tests:\s+\d|^test result: (ok|FAILED)\.")
 _UNITTEST_OK = re.compile(r"^OK( \(.*\))?$")
 _UNITTEST_RAN = re.compile(r"^Ran \d+ tests?\b")
 _SUMMARY_FAILED = re.compile(r"\b[1-9]\d* (failed|errors?)\b|FAILED")
@@ -137,7 +139,9 @@ def _failure(text: str, is_error: bool, group: Group, command: str | None) -> st
     summaries = [
         ln
         for i, ln in enumerate(lines)
-        if _SUMMARY.match(ln) or (_UNITTEST_OK.match(ln) and ran and ran[0] < i)
+        if _SUMMARY.match(ln)
+        or ((m := _PYTEST.match(ln)) and (m[3] or _SUMMARY_FAILED.search(ln)))
+        or (_UNITTEST_OK.match(ln) and ran and ran[0] < i)
     ]
     if summaries:
         return summaries[-1] if _SUMMARY_FAILED.search(summaries[-1]) else None

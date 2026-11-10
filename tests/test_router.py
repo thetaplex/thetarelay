@@ -794,7 +794,7 @@ def test_failing_test_summary_is_shown_to_the_judge() -> None:
         ("test result: FAILED. 3 passed; 1 failed; 0 ignored", True),
         ("panicked at expected\ntest result: ok. 3 passed; 0 failed; 0 ignored", False),
         ("1 error in 0.3s", True),
-        ("3 failed, 1 passed in 2.0s\nrerun:\n4 passed in 1.0s", False),  # the last summary wins
+        ("3 failed, 1 passed\nrerun:\n4 passed in 1.0s", False),  # the last summary wins
     ],
 )
 def test_test_runner_summaries(output: str, failed: bool) -> None:
@@ -870,6 +870,11 @@ def test_non_string_ids_are_unlinked(build: Any, provider: str) -> None:
 )
 def test_signals_inside_a_line_do_not_mask_a_failure(output: str) -> None:
     assert _sh("python app.py", output).failed
+
+
+def test_failing_pytest_summary_without_timing_is_a_failure() -> None:
+    res = _sh("uv run pytest", "Error: expected\n3 failed, 41 passed")
+    assert "result FAILED: 3 failed, 41 passed" in summarize([res])["recent_steps"]
 
 
 def test_unittest_ok_after_ran_line_passes() -> None:
