@@ -87,6 +87,9 @@ class RouterConfig:
     # the request goes to the frontier tier: the lite model takes tool steps, the frontier
     # model decides when the task is done. Lite responses are buffered to check this.
     escalate_on_stop: bool = True
+    # `irreversible`: discard lite replies with an irreversible or malformed tool call and ask
+    # the frontier tier instead. `writes`: also discard file-editing steps.
+    lite_guard: str = "off"
 
     turn_log_path: str = ""
     debug: bool = False
@@ -99,6 +102,10 @@ class RouterConfig:
             raise ValueError(
                 "route_mode must be judge, triage, hybrid, random, lite or frontier, "
                 f"got {self.route_mode!r}"
+            )
+        if self.lite_guard not in ("off", "irreversible", "writes"):
+            raise ValueError(
+                f"lite_guard must be off, irreversible or writes, got {self.lite_guard!r}"
             )
         if not 0.0 <= self.random_lite_share <= 1.0:
             raise ValueError(
@@ -135,6 +142,7 @@ class RouterConfig:
             route_mode=_env("THETARELAY_ROUTE_MODE", cls.route_mode),
             random_lite_share=_env_float("THETARELAY_RANDOM_LITE_SHARE", cls.random_lite_share),
             escalate_on_stop=_env_bool("THETARELAY_ESCALATE_ON_STOP", cls.escalate_on_stop),
+            lite_guard=_env("THETARELAY_LITE_GUARD", cls.lite_guard),
             turn_log_path=_env("THETARELAY_TURN_LOG", ""),
             debug=_env_bool("THETARELAY_DEBUG", False),
             enable_headroom_middleware=_env_bool("THETARELAY_HEADROOM_MIDDLEWARE", True),

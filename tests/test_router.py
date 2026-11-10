@@ -1275,3 +1275,16 @@ async def test_triage_error_reply_has_no_verdict(tmp_path: Path) -> None:
     await _post_openai(app, TOOL_RUN)
     line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
     assert "triage_verdict" not in line
+
+
+def test_lite_guard_default_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("THETARELAY_LITE_GUARD", raising=False)
+    assert RouterConfig().lite_guard == "off"
+    assert RouterConfig.from_env().lite_guard == "off"
+    monkeypatch.setenv("THETARELAY_LITE_GUARD", "writes")
+    assert RouterConfig.from_env().lite_guard == "writes"
+
+
+def test_lite_guard_invalid_value_names_levels() -> None:
+    with pytest.raises(ValueError, match="off, irreversible or writes"):
+        RouterConfig(lite_guard="strict")
