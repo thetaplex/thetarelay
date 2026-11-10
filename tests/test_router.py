@@ -1146,3 +1146,74 @@ async def test_step_groups_follow_the_frontier_reply_after_escalation(tmp_path: 
 async def test_turn_log_never_holds_the_client_key(tmp_path: Path) -> None:
     await _post(_reply_app(tmp_path, _tool_use(("bash", {"command": "ls"}))), EASY)
     assert "sk-client" not in (tmp_path / "turns.jsonl").read_text()
+
+
+def _push_chunks() -> list[bytes]:
+    first = {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {"index": 0, "id": "c", "function": {"name": "bash", "arguments": ""}}
+                    ]
+                }
+            }
+        ]
+    }
+    second = {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {"index": 0, "function": {"arguments": '{"command": "git push"}'}}
+                    ]
+                }
+            }
+        ]
+    }
+    return [_sse(first)[: -len(b"data: [DONE]\n\n")], _sse(second)[: -len(b"data: [DONE]\n\n")]]
+
+
+@pytest.mark.asyncio
+async def test_cut_stream_logs_irreversible_and_stream_cut(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, None)
+
+    async def cut() -> Any:
+        for c in _push_chunks():
+            yield c
+        raise httpx.ReadError("boom")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=cut(), headers={"content-type": "text/event-stream"})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await _post_openai(app, {**TOOL_RUN, "stream": True})
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    assert line["status"] == 502
+    assert line["step_groups"] == ["irreversible"]
+    assert line["stream_cut"] is True
+
+
+@pytest.mark.asyncio
+async def test_cut_stream_with_unreadable_call_is_irreversible(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, None)
+
+    async def cut() -> Any:
+        yield _push_chunks()[0]
+        raise httpx.ReadError("boom")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=cut(), headers={"content-type": "text/event-stream"})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await _post_openai(app, {**TOOL_RUN, "stream": True})
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    assert line["step_groups"] == ["irreversible"]
+
+
+@pytest.mark.asyncio
+async def test_normal_stream_has_no_stream_cut(tmp_path: Path) -> None:
+    sse = _sse({"choices": [{"delta": {"content": "hi"}, "finish_reason": "stop"}]})
+    await _post(_reply_app(tmp_path, sse, "text/event-stream"), {**EASY, "stream": True})
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    assert "stream_cut" not in line

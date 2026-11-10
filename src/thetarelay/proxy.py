@@ -150,6 +150,13 @@ def _step_groups(status: int, raw: bytes) -> list[str]:
     return ["irreversible"] if signals_tool_call(raw) else []
 
 
+def _cut_step_groups(seen: bytes) -> list[str]:
+    """Step groups of a stream cut short; a started but unreadable tool call is irreversible."""
+    groups = _step_groups(200, seen)
+    started = b'"tool_use"' in seen or b'"tool_calls"' in seen
+    return groups or (["irreversible"] if started else [])
+
+
 def _text_verdict(text: str) -> bool | None:
     """True: the reply is <EASY/>. False: it is not. None: too short to tell."""
     t = text.lstrip()
@@ -525,11 +532,13 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             async def relay() -> AsyncIterator[bytes]:
                 usage = StreamUsage()
                 seen = bytearray()
+                finished = False
                 try:
                     async for chunk in upstream.aiter_bytes():
                         usage.feed(chunk)
                         seen += chunk
                         yield chunk
+                    finished = True
                 except httpx.TransportError as exc:
                     logger.warning("Upstream stream interrupted: %s", exc)
                     record["status"] = 502
@@ -538,7 +547,13 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                     if usage.usage:
                         record.update(_usage(provider, {"usage": usage.usage}))
                     record.setdefault("status", upstream.status_code)
-                    record["step_groups"] = _step_groups(record["status"], bytes(seen))
+                    if finished:
+                        record["step_groups"] = _step_groups(record["status"], bytes(seen))
+                    else:
+                        # Cut short (upstream error or client gone): the agent may already
+                        # hold a tool call, so count what was relayed, whatever the status.
+                        record["stream_cut"] = True
+                        record["step_groups"] = _cut_step_groups(bytes(seen))
                     record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
                     recorder.record(record)
 
