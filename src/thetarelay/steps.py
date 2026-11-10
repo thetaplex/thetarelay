@@ -15,13 +15,23 @@ from typing import Any, Literal
 Group = Literal["read", "run", "write", "irreversible"]
 SEVERITY: dict[Group, int] = {"read": 0, "run": 1, "write": 2, "irreversible": 3}
 
-# Tool names of Pi, OpenCode and Claude Code, lowercased.
+# Tool names of Pi, OpenCode and Claude Code, lowercased. Claude Code and OpenCode names follow
+# their tool reference docs. Tools that only plan, ask the user or load instructions are `read`.
 READ_TOOLS = frozenset(
-    {"read", "read_file", "view", "grep", "glob", "ls", "list", "find"}
-    | {"todowrite", "todoread", "webfetch", "websearch"}
+    {"read", "read_file", "view", "grep", "glob", "ls", "list", "find", "lsp"}
+    | {"webfetch", "websearch", "todowrite", "todoread"}
+    | {"taskcreate", "taskget", "tasklist", "taskupdate", "taskoutput"}
+    | {"toolsearch", "skill", "askuserquestion", "question", "enterplanmode", "exitplanmode"}
+    | {"reportfindings", "listagents", "cronlist", "listmcpresourcestool"}
+    | {"readmcpresourcetool", "waitformcpservers", "schedulewakeup", "subagenthandback"}
 )
-WRITE_TOOLS = frozenset({"edit", "multiedit", "write", "patch", "notebookedit"})
+WRITE_TOOLS = frozenset(
+    {"edit", "multiedit", "write", "patch", "notebookedit", "experimental_image_generate"}
+    | {"enterworktree", "exitworktree", "taskstop"}
+)
 SHELL_TOOLS = frozenset({"bash", "shell", "run_command", "execute_command"})
+# Run their `command` argument like a shell tool; without one (Monitor's `ws`) they are unknown.
+_COMMAND_TOOLS = SHELL_TOOLS | {"monitor"}
 
 _READ_PROGRAMS = frozenset(
     {"cat", "head", "tail", "ls", "pwd", "cd", "echo", "printf", "true", "grep", "egrep"}
@@ -91,7 +101,7 @@ def classify(name: str, arguments: str | dict[str, Any]) -> Group:
         return "read"
     if tool in WRITE_TOOLS:
         return "write"
-    if tool in SHELL_TOOLS and isinstance(args.get("command"), str):
+    if tool in _COMMAND_TOOLS and isinstance(args.get("command"), str):
         return shell_group(args["command"])
     return "irreversible"
 

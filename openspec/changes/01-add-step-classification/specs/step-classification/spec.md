@@ -25,9 +25,11 @@ be matched case-insensitively.
 
 ### Requirement: Agent-internal and web tools
 
-The system SHALL classify the agent's own planning tools (`todowrite`, `todoread`) and web tools
-that only fetch (`webfetch`, `websearch`) as `read`. Tools that start another agent (`task`)
-SHALL be classified `irreversible`.
+The system SHALL classify the built-in tools of Claude Code and OpenCode by their tool reference
+docs. Tools that plan, keep the agent's task list, only fetch, ask the user, load instructions
+or change only the session's mode SHALL be `read`. Tools that change only local files, local
+git state or local processes SHALL be `write`. Tools that start or message another agent,
+publish, send or schedule, and MCP tools, SHALL be `irreversible`.
 
 #### Scenario: Todo update
 
@@ -42,6 +44,42 @@ SHALL be classified `irreversible`.
 #### Scenario: Sub-agent
 
 - **WHEN** a tool call uses `Task`
+- **THEN** it is classified `irreversible`
+
+#### Scenario: Instructions and questions
+
+- **WHEN** a tool call uses `ToolSearch`, `Skill`, `AskUserQuestion` or `ExitPlanMode`
+- **THEN** it is classified `read`
+
+#### Scenario: Local worktree
+
+- **WHEN** a tool call uses `EnterWorktree` or `TaskStop`
+- **THEN** it is classified `write`
+
+
+#### Scenario: Publishing and MCP tools
+
+- **WHEN** a tool call uses `Artifact`, `CronCreate`, `execute` or `mcp__github__create_issue`
+- **THEN** it is classified `irreversible`
+
+### Requirement: Monitor commands
+
+The system SHALL classify a `monitor` call with a command like a shell command, and a `monitor`
+call without one (a WebSocket watch) as `irreversible`.
+
+#### Scenario: Monitor a log
+
+- **WHEN** a `Monitor` call has the command `tail -f app.log`
+- **THEN** it is classified `read`
+
+#### Scenario: Monitor a push
+
+- **WHEN** a `Monitor` call has the command `git push`
+- **THEN** it is classified `irreversible`
+
+#### Scenario: Monitor a WebSocket
+
+- **WHEN** a `Monitor` call has a WebSocket source instead of a command
 - **THEN** it is classified `irreversible`
 
 ### Requirement: Unknown and unparsable steps fail closed

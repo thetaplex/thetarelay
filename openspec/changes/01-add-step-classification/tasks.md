@@ -35,14 +35,23 @@
   verify its output on the dataset, and widen the allowlists for any read or run program that
   appears more than once as `irreversible`
 
-## 5. Wrap-up
+## 5. Claude Code and OpenCode tools
 
-- [x] 5.1 Add a line about `scripts/step_eval` to `CONTRIBUTING.md` (no `CHANGELOG.md` entry: no
+- [x] 5.1 Add tests for the documented built-in tools of both agents ("Instructions and
+  questions", "Local worktree", "Monitor a log/push/WebSocket", "Publishing and MCP tools")
+- [x] 5.2 Add the names to the tool tables and classify Monitor's command; verify the 5.1
+  tests pass
+- [x] 5.3 Add one `"source": "docs"` dataset line per documented tool; verify `just check`
+
+## 6. Wrap-up
+
+- [x] 6.1 Add a line about `scripts/step_eval` to `CONTRIBUTING.md` (no `CHANGELOG.md` entry: no
   user-facing behaviour yet); verify `just check` passes
-- [x] 5.2 Run `openspec validate 01-add-step-classification --strict`; verify it passes
+- [x] 6.2 Run `openspec validate 01-add-step-classification --strict`; verify it passes
 
 ## Workflow follow-up
 
 - Archive the change with `openspec archive 01-add-step-classification` after merge.
-- The dataset covers only Pi until OpenCode and Claude Code sessions are captured; record this
-  as an open item in the archive commit.
+- Captured calls come from Pi and Claude Code app eval sessions; OpenCode has only doc-derived
+  lines (one per built-in tool). Record real OpenCode shell commands as an open item in the
+  archive commit.

@@ -27,6 +27,17 @@ no API keys, tokens or other secrets.
 - **THEN** its unique tool calls can be added to the dataset with a command that drops
   duplicates and leaves the label empty for review
 
+### Requirement: Every documented tool
+
+The dataset SHALL have at least one line for each built-in tool in the Claude Code and OpenCode
+tool reference docs. Lines written from the docs rather than captured SHALL be marked
+`"source": "docs"`.
+
+#### Scenario: Documented tool
+
+- **WHEN** a tool is listed in the Claude Code or OpenCode tool reference
+- **THEN** the dataset has a line for it with a reviewed label
+
 ### Requirement: Under-classification is a failure
 
 The evaluation SHALL report every call the classifier puts in a less severe group than its

@@ -258,3 +258,66 @@
 {"agent": "claude-code", "tool": "Bash", "arguments": "{\"command\": \"cd /private/var/folders/lj/km1m00j57nd9d0q0529s8mbc0000gn/T/app-eval-claude-2-ex49r3d8 && sed -n '36,53p' SPEC.md | base64\", \"description\": \"Print spec lines 36-53 encoded\"}", "label": "read"}
 {"agent": "claude-code", "tool": "Bash", "arguments": "{\"command\": \"rm -f bookmarks.db && (BOOKMARKS_DB=/tmp/bm_smoke.db uv run uvicorn app.main:app --port 8765 >/tmp/uv.log 2>&1 &) ; for i in 1 2 3 4 5 6; do curl -s localhost:8765/health && break; /bin/sleep 1; done; echo; curl -s -XPOST localhost:8765/bookmarks -H 'content-type: application/json' -d '{\\\"url\\\":\\\"https://a.com\\\",\\\"tags\\\":[\\\"X\\\",\\\" x \\\"]}'; echo; pkill -f \\\"uvicorn app.main:app\\\"; rm -f /tmp/bm_smoke.db\", \"description\": \"Smoke-test running server with uvicorn\"}", "label": "irreversible"}
 {"agent": "claude-code", "tool": "Bash", "arguments": "{\"command\": \"cd /private/var/folders/lj/km1m00j57nd9d0q0529s8mbc0000gn/T/app-eval-claude-2-ex49r3d8 && rm -f bookmarks.db && (BOOKMARKS_DB=/tmp/bm_smoke.db uv run uvicorn app.main:app --port 8765 >/tmp/uv.log 2>&1 &) ; for i in 1 2 3 4 5 6; do curl -s localhost:8765/health && break; /bin/sleep 1; done; echo; curl -s -XPOST localhost:8765/bookmarks -H 'content-type: application/json' -d '{\\\"url\\\":\\\"https://a.com\\\",\\\"tags\\\":[\\\"X\\\",\\\" x \\\"]}'; echo; pkill -f \\\"uvicorn app.main:app\\\"; rm -f /tmp/bm_smoke.db\", \"description\": \"Smoke-test running server with uvicorn\"}", "label": "irreversible"}
+{"agent": "claude-code", "tool": "Read", "arguments": "{\"file_path\": \"src/app.py\"}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "Glob", "arguments": "{\"pattern\": \"**/*.py\"}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "Grep", "arguments": "{\"pattern\": \"def main\"}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "LSP", "arguments": "{\"operation\": \"goToDefinition\"}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "WebFetch", "arguments": "{\"url\": \"https://example.com\"}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "WebSearch", "arguments": "{\"query\": \"uv docs\"}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "TodoWrite", "arguments": "{\"todos\": []}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "TaskCreate", "arguments": "{\"subject\": \"Add tests\"}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "TaskGet", "arguments": "{\"taskId\": \"1\"}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "TaskList", "arguments": "{}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "TaskUpdate", "arguments": "{\"taskId\": \"1\"}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "TaskOutput", "arguments": "{\"task_id\": \"1\"}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "ToolSearch", "arguments": "{\"query\": \"select:Monitor\"}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "Skill", "arguments": "{\"skill\": \"tdd\"}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "AskUserQuestion", "arguments": "{\"questions\": []}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "EnterPlanMode", "arguments": "{}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "ExitPlanMode", "arguments": "{}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "ReportFindings", "arguments": "{\"findings\": []}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "ListAgents", "arguments": "{}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "CronList", "arguments": "{}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "ListMcpResourcesTool", "arguments": "{}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "ReadMcpResourceTool", "arguments": "{\"uri\": \"file:///x\"}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "WaitForMcpServers", "arguments": "{}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "ScheduleWakeup", "arguments": "{\"delaySeconds\": 60}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "SubagentHandback", "arguments": "{\"result\": \"done\"}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "Edit", "arguments": "{\"file_path\": \"src/app.py\"}", "label": "write", "source": "docs"}
+{"agent": "claude-code", "tool": "Write", "arguments": "{\"file_path\": \"src/app.py\"}", "label": "write", "source": "docs"}
+{"agent": "claude-code", "tool": "NotebookEdit", "arguments": "{\"notebook_path\": \"a.ipynb\"}", "label": "write", "source": "docs"}
+{"agent": "claude-code", "tool": "EnterWorktree", "arguments": "{\"name\": \"fix\"}", "label": "write", "source": "docs"}
+{"agent": "claude-code", "tool": "ExitWorktree", "arguments": "{}", "label": "write", "source": "docs"}
+{"agent": "claude-code", "tool": "TaskStop", "arguments": "{\"task_id\": \"1\"}", "label": "write", "source": "docs"}
+{"agent": "claude-code", "tool": "Bash", "arguments": "{\"command\": \"uv run pytest -q\"}", "label": "run", "source": "docs"}
+{"agent": "claude-code", "tool": "Monitor", "arguments": "{\"command\": \"tail -f app.log\"}", "label": "read", "source": "docs"}
+{"agent": "claude-code", "tool": "Monitor", "arguments": "{\"ws\": {\"url\": \"wss://example.com/events\"}}", "label": "irreversible", "source": "docs"}
+{"agent": "claude-code", "tool": "Agent", "arguments": "{\"prompt\": \"Review the diff\"}", "label": "irreversible", "source": "docs"}
+{"agent": "claude-code", "tool": "Workflow", "arguments": "{\"script\": \"x\"}", "label": "irreversible", "source": "docs"}
+{"agent": "claude-code", "tool": "SendMessage", "arguments": "{\"to\": \"agent-1\"}", "label": "irreversible", "source": "docs"}
+{"agent": "claude-code", "tool": "Artifact", "arguments": "{\"file_path\": \"page.html\"}", "label": "irreversible", "source": "docs"}
+{"agent": "claude-code", "tool": "PushNotification", "arguments": "{\"message\": \"done\"}", "label": "irreversible", "source": "docs"}
+{"agent": "claude-code", "tool": "SendUserFile", "arguments": "{\"path\": \"report.md\"}", "label": "irreversible", "source": "docs"}
+{"agent": "claude-code", "tool": "ShareOnboardingGuide", "arguments": "{}", "label": "irreversible", "source": "docs"}
+{"agent": "claude-code", "tool": "RemoteTrigger", "arguments": "{\"action\": \"run\"}", "label": "irreversible", "source": "docs"}
+{"agent": "claude-code", "tool": "SendFeedback", "arguments": "{\"text\": \"x\"}", "label": "irreversible", "source": "docs"}
+{"agent": "claude-code", "tool": "CronCreate", "arguments": "{\"cron\": \"0 9 * * *\"}", "label": "irreversible", "source": "docs"}
+{"agent": "claude-code", "tool": "CronDelete", "arguments": "{\"id\": \"1\"}", "label": "irreversible", "source": "docs"}
+{"agent": "claude-code", "tool": "EndConversation", "arguments": "{}", "label": "irreversible", "source": "docs"}
+{"agent": "claude-code", "tool": "PowerShell", "arguments": "{\"command\": \"Get-ChildItem\"}", "label": "irreversible", "source": "docs"}
+{"agent": "claude-code", "tool": "mcp__github__create_issue", "arguments": "{\"title\": \"x\"}", "label": "irreversible", "source": "docs"}
+{"agent": "opencode", "tool": "read", "arguments": "{\"path\": \"src/app.py\"}", "label": "read", "source": "docs"}
+{"agent": "opencode", "tool": "glob", "arguments": "{\"pattern\": \"**/*.ts\"}", "label": "read", "source": "docs"}
+{"agent": "opencode", "tool": "grep", "arguments": "{\"pattern\": \"TODO\"}", "label": "read", "source": "docs"}
+{"agent": "opencode", "tool": "webfetch", "arguments": "{\"url\": \"https://example.com\"}", "label": "read", "source": "docs"}
+{"agent": "opencode", "tool": "websearch", "arguments": "{\"query\": \"bun docs\"}", "label": "read", "source": "docs"}
+{"agent": "opencode", "tool": "question", "arguments": "{\"questions\": []}", "label": "read", "source": "docs"}
+{"agent": "opencode", "tool": "skill", "arguments": "{\"name\": \"tdd\"}", "label": "read", "source": "docs"}
+{"agent": "opencode", "tool": "edit", "arguments": "{\"path\": \"src/app.ts\"}", "label": "write", "source": "docs"}
+{"agent": "opencode", "tool": "write", "arguments": "{\"path\": \"src/app.ts\"}", "label": "write", "source": "docs"}
+{"agent": "opencode", "tool": "patch", "arguments": "{\"patchText\": \"*** Begin Patch\"}", "label": "write", "source": "docs"}
+{"agent": "opencode", "tool": "experimental_image_generate", "arguments": "{\"prompt\": \"logo\", \"path\": \"logo.png\"}", "label": "write", "source": "docs"}
+{"agent": "opencode", "tool": "bash", "arguments": "{\"command\": \"git status\"}", "label": "read", "source": "docs"}
+{"agent": "opencode", "tool": "shell", "arguments": "{\"command\": \"npm test\"}", "label": "run", "source": "docs"}
+{"agent": "opencode", "tool": "subagent", "arguments": "{\"prompt\": \"Review\"}", "label": "irreversible", "source": "docs"}
+{"agent": "opencode", "tool": "execute", "arguments": "{\"code\": \"await fetch(url)\"}", "label": "irreversible", "source": "docs"}
