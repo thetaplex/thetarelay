@@ -15,9 +15,11 @@ Change 03 adds `cache_write_tokens`; the report reads it when present.
   `null` cost counts as 0, and the report says how many requests had no reported cost. A tier
   whose lines all lack a cost shows `n/a`.
 - **Frontier-only estimate:** frontier lines at their actual cost, plus each lite line priced at
-  the frontier model's prices with the same token counts: `(input - cached) * input price +
-  cached * cache-read price + cache_write * cache-write price + output * output price`. The
-  frontier model is the most common `model` among frontier lines, or `--frontier-model`.
+  the frontier model's prices with the same token counts: `uncached * input price +
+  cached * cache-read price + cache_write * cache-write price + output * output price`. Uncached is `input_tokens`
+  for an Anthropic line (it already excludes cache reads and writes) and
+  `max(0, input_tokens - cached - cache_write)` for an OpenAI-format line or one without
+  `provider`. The frontier model is the most common `model` among frontier lines, or `--frontier-model`.
 - **Prices:** from OpenRouter's public models list (`GET https://openrouter.ai/api/v1/models`,
   no key needed), field `pricing` (USD per token as strings: `prompt`, `completion`,
   `input_cache_read`, `input_cache_write`; a missing cache price falls back to `prompt`). With

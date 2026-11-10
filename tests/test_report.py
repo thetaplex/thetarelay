@@ -80,8 +80,8 @@ def test_cache_prices_and_write_tokens(tmp_path: Path) -> None:
     rows = [line(inp=1_000_000, cached=400_000, out=0, cache_write_tokens=100_000)]
     prices = {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_write": 6.25}
     r = build(write(tmp_path, rows), prices=prices)
-    # (1M - 0.4M) * 5 + 0.4M * 0.5 + 0.1M * 6.25
-    assert r["estimate_usd"] == pytest.approx(3.0 + 0.2 + 0.625)
+    # OpenAI format: input includes reads and writes: (1M - 0.4M - 0.1M) * 5 + 0.4M * 0.5 + 0.1M * 6.25
+    assert r["estimate_usd"] == pytest.approx(2.5 + 0.2 + 0.625)
     assert r["tiers"]["lite"]["cache_write_tokens"] == 100_000
 
 
@@ -160,10 +160,39 @@ def test_json_output_via_cli(
 
 
 def test_cached_above_input_is_clamped(tmp_path: Path) -> None:
-    r = build(
-        write(tmp_path, [line(inp=100, cached=1_000_000)]), prices={"input": 5.0, "output": 25.0}
-    )
-    assert r["estimate_usd"] >= 0
+    rows = [line(inp=100, cached=1_000_000, provider="openai")]
+    r = build(write(tmp_path, rows), prices={"input": 5.0, "output": 25.0})
+    assert r["estimate_usd"] == pytest.approx(5.0)  # uncached 0; cache read falls back to input
+
+
+def test_anthropic_input_excludes_cache(tmp_path: Path) -> None:
+    rows = [line(inp=200, cached=10_000, out=1000, provider="anthropic")]
+    prices = {"input": 5.0, "output": 25.0, "cache_read": 0.5}
+    r = build(write(tmp_path, rows), prices=prices)
+    assert r["estimate_usd"] == pytest.approx(200 * 5 / 1e6 + 10_000 * 0.5 / 1e6 + 1000 * 25 / 1e6)
+    assert r["estimate_usd"] == pytest.approx(0.031)
+
+
+def test_cli_missing_path_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as e:
+        main(["report", str(tmp_path / "nope.jsonl"), "--offline"])
+    assert e.value.code == 2
+    assert "cannot read" in capsys.readouterr().err
+
+
+def test_cli_single_price_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path = write(tmp_path, [line()])
+    with pytest.raises(SystemExit) as e:
+        main(["report", str(path), "--offline", "--price-input", "5"])
+    assert e.value.code == 2
+    assert "--price-output" in capsys.readouterr().err
+
+
+def test_models_response_not_a_dict_is_na(tmp_path: Path) -> None:
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=[1])))
+    r = report.build(write(tmp_path, [line(cost=0.2)]), client=client)
+    assert r["estimate_usd"] is None
+    assert r["price_error"]
 
 
 def test_text_assumption_line_and_singular_counts(tmp_path: Path) -> None:

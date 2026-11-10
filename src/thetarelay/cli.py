@@ -1,4 +1,4 @@
-"""Command-line interface: `thetarelay proxy` and `thetarelay judge`."""
+"""Command-line interface: `thetarelay proxy`, `judge` and `report`."""
 
 from __future__ import annotations
 
@@ -51,14 +51,19 @@ def main(argv: list[str] | None = None) -> None:
         from . import report
 
         prices = None
+        if (args.price_input is None) != (args.price_output is None):
+            parser.error("--price-input and --price-output must be given together")
         if args.price_input is not None and args.price_output is not None:
             prices = {"input": args.price_input, "output": args.price_output}
             for k in ("cache_read", "cache_write"):
                 if (v := getattr(args, f"price_{k}")) is not None:
                     prices[k] = v
-        r = report.build(
-            args.path, frontier_model=args.frontier_model, offline=args.offline, prices=prices
-        )
+        try:
+            r = report.build(
+                args.path, frontier_model=args.frontier_model, offline=args.offline, prices=prices
+            )
+        except OSError as e:
+            parser.error(f"cannot read {args.path}: {e}")
         print(json.dumps(r, indent=2) if args.json else report.format_text(r))
         return
 

@@ -57,8 +57,12 @@ def _tokens(row: dict[str, Any], key: str) -> int:
 def _line_estimate(row: dict[str, Any], p: dict[str, float]) -> float:
     inp = p["input"]
     cached = _tokens(row, "cached_tokens")
+    write = _tokens(row, "cache_write_tokens")
+    uncached = _tokens(row, "input_tokens")
+    if row.get("provider") != "anthropic":  # OpenAI format: prompt_tokens includes cache
+        uncached = max(0, uncached - cached - write)
     return (
-        max(0, _tokens(row, "input_tokens") - cached) * inp
+        uncached * inp
         + cached * p.get("cache_read", inp)
         + _tokens(row, "cache_write_tokens") * p.get("cache_write", inp)
         + _tokens(row, "output_tokens") * p["output"]
@@ -112,7 +116,7 @@ def build(
                     prices = fetch_prices(model, http)
             else:
                 prices = fetch_prices(model, client)
-        except (httpx.HTTPError, LookupError, KeyError, ValueError) as e:
+        except (httpx.HTTPError, LookupError, KeyError, ValueError, AttributeError) as e:
             price_error = str(e) or type(e).__name__
         else:
             source = "OpenRouter"
