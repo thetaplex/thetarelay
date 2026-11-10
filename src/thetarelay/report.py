@@ -58,7 +58,7 @@ def _line_estimate(row: dict[str, Any], p: dict[str, float]) -> float:
     inp = p["input"]
     cached = _tokens(row, "cached_tokens")
     return (
-        (_tokens(row, "input_tokens") - cached) * inp
+        max(0, _tokens(row, "input_tokens") - cached) * inp
         + cached * p.get("cache_read", inp)
         + _tokens(row, "cache_write_tokens") * p.get("cache_write", inp)
         + _tokens(row, "output_tokens") * p["output"]
@@ -85,7 +85,7 @@ def build(
     no_cost = 0
     for row in rows:
         t = tiers.setdefault(
-            str(row.get("tier")),
+            str(row.get("tier") or "unknown"),
             {"requests": 0, **dict.fromkeys(_FIELDS, 0), "cost_usd": None},
         )
         t["requests"] += 1
@@ -96,12 +96,13 @@ def build(
             no_cost += 1
         else:
             t["cost_usd"] = (t["cost_usd"] or 0) + c
-        reasons.update(str(row.get("reason", "")).split("; "))
+        reasons.update((str(row.get("reason") or "unknown")).split("; "))
     actual = sum(t["cost_usd"] or 0 for t in tiers.values())
 
     models = Counter(r.get("model") for r in rows if r.get("tier") == "frontier")
     model = frontier_model or (models.most_common(1)[0][0] if models else None)
     price_error = None
+    source = "given" if prices is not None else None
     if prices is None and not offline:
         try:
             if not model:
@@ -113,6 +114,8 @@ def build(
                 prices = fetch_prices(model, client)
         except (httpx.HTTPError, LookupError, KeyError, ValueError) as e:
             price_error = str(e) or type(e).__name__
+        else:
+            source = "OpenRouter"
     estimate = None
     if prices is not None:
         estimate = sum(
@@ -130,6 +133,7 @@ def build(
         "skipped_lines": skipped,
         "frontier_model": model,
         "prices_usd_per_million": prices,
+        "prices_source": source,
         "price_error": price_error,
     }
 
@@ -150,19 +154,26 @@ def format_text(r: dict[str, Any]) -> str:
     if r["price_error"]:
         est += f" ({r['price_error']})"
     out.append(f"frontier-only cost (estimate): {est}")
-    out.append(
-        "  assumption: lite requests priced at frontier prices with the same token counts"
-        + (f" ({r['frontier_model']}, {r['prices_usd_per_million']} USD per million tokens)"
-           if r["prices_usd_per_million"] else "")
-    )  # fmt: skip
+    pr = r["prices_usd_per_million"]
+    model = f"{r['frontier_model']} " if r["frontier_model"] else "frontier "
+    line = f"Estimate: lite requests priced at {model}prices with the same token counts"
+    if pr:
+        inp = pr["input"]
+        line += (
+            f" (input ${inp:.2f}/M, output ${pr['output']:.2f}/M, "
+            f"cache read ${pr.get('cache_read', inp):.2f}/M, "
+            f"cache write ${pr.get('cache_write', inp):.2f}/M; source: {r['prices_source']})"
+        )
+    out.append(line)
     out.append(
         "saving: n/a" if r["saving_pct"] is None else f"saving: {r['saving_pct']:.1f}% (estimate)"
     )
     if r["no_cost_requests"]:
-        out.append(f"{r['no_cost_requests']} requests had no reported cost (counted as 0)")
+        n = r["no_cost_requests"]
+        out.append(f"{n} request{'s' * (n != 1)} had no reported cost (counted as 0)")
     if r["skipped_lines"]:
-        out.append(f"{r['skipped_lines']} lines skipped (not valid JSON)")
-    if r["reasons"]:
+        n = r["skipped_lines"]
+        out.append(f"{n} line{'s' * (n != 1)} skipped (not valid JSON)")
         out.append("reasons:")
         out += [f"  {k}: {v}" for k, v in sorted(r["reasons"].items())]
     return "\n".join(out)

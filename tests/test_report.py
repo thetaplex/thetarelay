@@ -157,3 +157,27 @@ def test_json_output_via_cli(
     out = json.loads(capsys.readouterr().out)
     assert out["estimate_usd"] == pytest.approx(5.25)
     assert out["actual_usd"] == pytest.approx(0.01)
+
+
+def test_cached_above_input_is_clamped(tmp_path: Path) -> None:
+    r = build(
+        write(tmp_path, [line(inp=100, cached=1_000_000)]), prices={"input": 5.0, "output": 25.0}
+    )
+    assert r["estimate_usd"] >= 0
+
+
+def test_text_assumption_line_and_singular_counts(tmp_path: Path) -> None:
+    rows = [{"tier": None, "reason": "", "input_tokens": 1}, line("frontier", cost=1.0)]
+    path = write(tmp_path, rows, junk=1)
+    prices = {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_write": 6.25}
+    text = report.format_text(build(path, prices=prices, frontier_model=OPUS))
+    assert (
+        f"Estimate: lite requests priced at {OPUS} prices with the same token counts "
+        "(input $5.00/M, output $25.00/M, cache read $0.50/M, cache write $6.25/M; "
+        "source: given)"
+    ) in text
+    assert "1 line skipped" in text
+    assert "1 request had no reported cost" in text
+    assert "unknown" in text
+    assert "None" not in text
+    assert "{" not in text
