@@ -17,16 +17,16 @@ Spec: `specs/turn-log/spec.md`. Code in `src/thetarelay/proxy.py`; tests in
 
 ## Task 2: Step groups of the reply
 
-- [ ] 2.1 Write failing tests for every scenario under "Step groups of the reply" and "No
+- [x] 2.1 Write failing tests for every scenario under "Step groups of the reply" and "No
   secrets", including a streamed frontier reply whose chunks reach the client unchanged and in
   order; verify they fail
-- [ ] 2.2 Record `step_groups` for the reply that reached the agent: the group of each call from
+- [x] 2.2 Record `step_groups` for the reply that reached the agent: the group of each call from
   `thetarelay.steps.tool_calls` and `classify`, in order; `["irreversible"]` when
   `signals_tool_call` is true but no call can be read; `[]` for a non-200 status or a text-only
   reply. For streams, keep the relayed chunks in a buffer inside `relay()` as they pass and
   compute the groups in its `finally`, so no chunk is delayed. Verify the 2.1 tests pass
-- [ ] 2.3 Add `step_groups` to the Turn log table in `docs/reference/http-api.md`, and a
+- [x] 2.3 Add `step_groups` to the Turn log table in `docs/reference/http-api.md`, and a
   `CHANGELOG.md` entry under `[Unreleased]` / `### Added`: the turn log records the step groups
   of each reply, cache-write tokens and the triage verdict
-- [ ] 2.4 Run `openspec validate 03-log-routing-signals --strict` and `just check`; mark all
+- [x] 2.4 Run `openspec validate 03-log-routing-signals --strict` and `just check`; mark all
   tasks `[x]`

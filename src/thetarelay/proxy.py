@@ -21,7 +21,7 @@ from fastapi.responses import StreamingResponse
 from . import __version__
 from .config import RouterConfig
 from .router import Decision, conversation_key, decide, events
-from .steps import signals_tool_call
+from .steps import classify, signals_tool_call, tool_calls
 
 logger = logging.getLogger("thetarelay.proxy")
 
@@ -138,6 +138,16 @@ def _usage(provider: str, data: dict[str, Any]) -> dict[str, Any]:
         "output_tokens": u.get("completion_tokens"),
         "cost_usd": u.get("cost"),
     }
+
+
+def _step_groups(status: int, raw: bytes) -> list[str]:
+    """Step groups of the tool calls in a reply; `irreversible` if a call cannot be read."""
+    if status != 200:
+        return []
+    calls = tool_calls(raw)
+    if calls:
+        return [classify(name, args) for name, args in calls]
+    return ["irreversible"] if signals_tool_call(raw) else []
 
 
 def _text_verdict(text: str) -> bool | None:
@@ -436,6 +446,7 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
 
         def _bad_gateway(exc: httpx.TransportError) -> Response:
             record["status"] = 502
+            record["step_groups"] = []
             record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
             recorder.record(record)
             return Response(
@@ -513,9 +524,11 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
 
             async def relay() -> AsyncIterator[bytes]:
                 usage = StreamUsage()
+                seen = bytearray()
                 try:
                     async for chunk in upstream.aiter_bytes():
                         usage.feed(chunk)
+                        seen += chunk
                         yield chunk
                 except httpx.TransportError as exc:
                     logger.warning("Upstream stream interrupted: %s", exc)
@@ -525,6 +538,7 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                     if usage.usage:
                         record.update(_usage(provider, {"usage": usage.usage}))
                     record.setdefault("status", upstream.status_code)
+                    record["step_groups"] = _step_groups(record["status"], bytes(seen))
                     record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
                     recorder.record(record)
 
@@ -546,6 +560,7 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             return _bad_gateway(exc)
         record["status"] = resp.status_code
         record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
+        record["step_groups"] = _step_groups(resp.status_code, resp.content)
         if resp.status_code == 200:
             with contextlib.suppress(ValueError):
                 record.update(_usage(provider, resp.json()))

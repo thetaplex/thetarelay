@@ -1021,3 +1021,128 @@ async def test_log_cache_fields_null_on_stream_without_usage(tmp_path: Path) -> 
     line = _last_line(tmp_path)
     assert line["cached_tokens"] is None
     assert line["cache_write_tokens"] is None
+
+
+# Step groups of the reply.
+
+
+def _reply_app(
+    tmp_path: Path,
+    reply: bytes,
+    content_type: str = "application/json",
+    status: int = 200,
+    p_easy: float | None = 0.9,
+    **overrides: Any,
+) -> Any:
+    app, _ = _app(tmp_path, p_easy, **overrides)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "judge.test" in str(request.url):
+            probs = {"easy": p_easy, "hard": 1 - (p_easy or 0)}
+            return httpx.Response(200, json={"answers": {"route": {"probabilities": probs}}})
+        return httpx.Response(status, content=reply, headers={"content-type": content_type})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return app
+
+
+def _groups(tmp_path: Path) -> Any:
+    return json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])["step_groups"]
+
+
+def _tool_use(*calls: tuple[str, dict[str, Any]]) -> bytes:
+    content = [
+        {"type": "tool_use", "id": f"t{i}", "name": n, "input": a} for i, (n, a) in enumerate(calls)
+    ]
+    return json.dumps({"content": content, "stop_reason": "tool_use"}).encode()
+
+
+@pytest.mark.asyncio
+async def test_step_groups_lite_reply_with_two_calls(tmp_path: Path) -> None:
+    reply = _tool_use(("read", {"file_path": "a.py"}), ("edit", {"file_path": "a.py"}))
+    resp = await _post(_reply_app(tmp_path, reply), EASY)
+    assert resp.content == reply
+    assert _groups(tmp_path) == ["read", "write"]
+
+
+@pytest.mark.asyncio
+async def test_step_groups_text_and_error_replies_are_empty(tmp_path: Path) -> None:
+    text = json.dumps({"content": [{"type": "text", "text": "hi"}]}).encode()
+    await _post(_reply_app(tmp_path, text), EASY)
+    assert _groups(tmp_path) == []
+    # An error body that mentions a tool call still logs no groups.
+    await _post(_reply_app(tmp_path, _tool_use(("bash", {"command": "ls"})), status=429), EASY)
+    assert _groups(tmp_path) == []
+
+
+@pytest.mark.asyncio
+async def test_step_groups_unreadable_call_is_irreversible(tmp_path: Path) -> None:
+    reply = b'{"stop_reason": "tool_use", "content": []}'
+    await _post(_reply_app(tmp_path, reply), EASY)
+    assert _groups(tmp_path) == ["irreversible"]
+
+
+@pytest.mark.asyncio
+async def test_step_groups_streamed_frontier_git_push(tmp_path: Path) -> None:
+    chunks: list[dict[str, Any]] = [
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {"index": 0, "id": "c", "function": {"name": "bash", "arguments": ""}}
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {"index": 0, "function": {"arguments": '{"command": "git push"}'}}
+                        ]
+                    }
+                }
+            ]
+        },
+        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+    ]
+    sse = _sse(*chunks)
+    app = _reply_app(tmp_path, sse, "text/event-stream", p_easy=None)
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://relay"
+        ) as client,
+        client.stream("POST", "/v1/chat/completions", json={**TOOL_RUN, "stream": True}) as resp,
+    ):
+        got = [c async for c in resp.aiter_bytes()]
+    assert b"".join(got) == sse
+    assert _groups(tmp_path) == ["irreversible"]
+
+
+@pytest.mark.asyncio
+async def test_step_groups_follow_the_frontier_reply_after_escalation(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, 0.9, escalate_on_stop=True)
+    frontier = _tool_use(("read", {"file_path": "a"}))
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "judge.test" in str(request.url):
+            return httpx.Response(
+                200, json={"answers": {"route": {"probabilities": {"easy": 0.9}}}}
+            )
+        if "local.test" in str(request.url):
+            return httpx.Response(200, json={"content": [{"type": "text", "text": "done"}]})
+        return httpx.Response(200, content=frontier)
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    resp = await _post(app, EASY)
+    assert resp.content == frontier
+    assert _groups(tmp_path) == ["read"]
+
+
+@pytest.mark.asyncio
+async def test_turn_log_never_holds_the_client_key(tmp_path: Path) -> None:
+    await _post(_reply_app(tmp_path, _tool_use(("bash", {"command": "ls"}))), EASY)
+    assert "sk-client" not in (tmp_path / "turns.jsonl").read_text()
