@@ -1,0 +1,13 @@
+[project]
+name = "todo-cli"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "pytest>=8",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
