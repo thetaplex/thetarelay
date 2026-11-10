@@ -37,7 +37,7 @@ None.
 - The research protocol (`paper/PROTOCOL.md` on `research/paper`) should reference these arms
   rather than define its own.
 
-## Open for review
+## Decided
 
-- Which two extra app specs? Proposal: one smaller than the current app (a CLI tool), one larger
-  (two services sharing a database).
+- Extra app specs: `todo-cli` (smaller, a CLI tool) and `inventory` (larger, two services
+  sharing a database). See `design.md`.
