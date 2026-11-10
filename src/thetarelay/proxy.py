@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import copy
+import hashlib
 import json
 import logging
 import os
+import random
 import sys
 import time
 from collections import Counter
@@ -200,6 +203,42 @@ def _reply_usage(provider: str, raw: bytes) -> dict[str, Any]:
     return _usage(provider, data if isinstance(data, dict) else {})
 
 
+def _shadow_calls(raw: bytes) -> list[dict[str, Any]]:
+    """Tool calls of a reply with only the target as text; the arguments become a hash."""
+    out = []
+    for name, args in tool_calls(raw):
+        parsed = json.loads(args)
+        target = next(
+            (parsed[k] for k in ("path", "file_path", "command") if parsed.get(k) is not None),
+            None,
+        )
+        canonical = json.dumps(parsed, sort_keys=True, separators=(",", ":"))
+        out.append(
+            {
+                "name": name,
+                "group": classify(name, parsed),
+                "target": None if target is None else str(target)[:200],
+                "args_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
+            }
+        )
+    return out
+
+
+def _shadow(frontier_raw: bytes, status: int, lite_raw: bytes) -> dict[str, Any]:
+    """The `shadow` object of a turn-log line: both replies' calls and whether they agree."""
+    if status != 200:
+        return {"error": f"http_{status}"}
+    try:
+        f, lite = _shadow_calls(frontier_raw), _shadow_calls(lite_raw)
+        same = len(f) == len(lite) and all(
+            (a["name"], a["target"]) == (b["name"], b["target"])
+            for a, b in zip(f, lite, strict=False)
+        )
+        return {"frontier": f, "lite": lite, "match": same}
+    except Exception:  # a reply we cannot read must not lose the line
+        return {"error": "parse"}
+
+
 def _text_verdict(text: str) -> bool | None:
     """True: the reply is <EASY/>. False: it is not. None: too short to tell."""
     t = text.lstrip()
@@ -386,6 +425,13 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
     """Create the ThetaRelay routing proxy application."""
     cfg = config or RouterConfig.from_env()
     recorder = TurnRecorder(cfg)
+    # Shadow requests and the deferred turn-log lines waiting for them; cancelled at shutdown.
+    shadow_tasks: set[asyncio.Task[Any]] = set()
+
+    def track(task: asyncio.Task[Any]) -> asyncio.Task[Any]:
+        shadow_tasks.add(task)
+        task.add_done_callback(shadow_tasks.discard)
+        return task
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -396,11 +442,17 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
         try:
             yield
         finally:
+            # Cancel the shadow requests; the lines waiting for them then record "shutdown".
+            for task in list(shadow_tasks):
+                if task.get_name() == "shadow":
+                    task.cancel()
+            await asyncio.gather(*list(shadow_tasks), return_exceptions=True)
             await app.state.http_client.aclose()
 
     app = FastAPI(title="ThetaRelay", version=__version__, lifespan=lifespan)
     app.state.config = cfg
     app.state.recorder = recorder
+    app.state.shadow_tasks = shadow_tasks
     app.state.headroom_middleware_active = False
     if cfg.host not in ("127.0.0.1", "localhost", "::1") and (
         cfg.frontier_api_key or cfg.lite_api_key
@@ -494,11 +546,51 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             )
             return await client.send(req, stream=record["stream"])
 
+        async def lite_shadow() -> tuple[int, bytes]:
+            # The lite tier's answer to the same step, never shown to the agent.
+            url, out, hdrs = _outbound(cfg, body, in_headers, "lite", provider)
+            if out.get("stream"):
+                out["stream"] = False
+                out.pop("stream_options", None)  # only valid on streamed requests
+            async with asyncio.timeout(cfg.lite_timeout_seconds):
+                resp = await client.post(
+                    url + query, content=json.dumps(out).encode(), headers=hdrs
+                )
+            return resp.status_code, resp.content
+
+        shadow: asyncio.Task[tuple[int, bytes]] | None = None
+        if (
+            decision.tier == "frontier"
+            and not decision.triage
+            and cfg.shadow_share > 0
+            and random.random() < cfg.shadow_share  # noqa: S311
+        ):
+            shadow = track(asyncio.create_task(lite_shadow(), name="shadow"))
+
+        async def record_after_shadow(task: asyncio.Task[tuple[int, bytes]], raw: bytes) -> None:
+            try:
+                record["shadow"] = _shadow(raw, *await task)
+            except asyncio.CancelledError:
+                record["shadow"] = {"error": "shutdown"}
+                recorder.record(record)
+                raise
+            except Exception as exc:
+                timed_out = isinstance(exc, TimeoutError | httpx.TimeoutException)
+                record["shadow"] = {"error": "timeout" if timed_out else type(exc).__name__}
+            recorder.record(record)
+
+        def write(raw: bytes) -> None:
+            """Write this request's line, after its shadow if it has one; never wait for it."""
+            if shadow is None:
+                recorder.record(record)
+            else:
+                track(asyncio.create_task(record_after_shadow(shadow, raw)))
+
         def _bad_gateway(exc: httpx.TransportError) -> Response:
             record["status"] = 502
             record["step_groups"] = []
             record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
-            recorder.record(record)
+            write(b"")
             return Response(
                 content=json.dumps({"error": {"type": "upstream_error", "message": str(exc)}}),
                 status_code=502,
@@ -610,7 +702,7 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                         record["stream_cut"] = True
                         record["step_groups"] = _cut_step_groups(bytes(seen))
                     record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
-                    recorder.record(record)
+                    write(bytes(seen))
                     await upstream.aclose()
 
             resp_headers = {
@@ -635,7 +727,7 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
         if resp.status_code == 200:
             with contextlib.suppress(ValueError):
                 record.update(_usage(provider, resp.json()))
-        recorder.record(record)
+        write(resp.content)
         resp_headers = {
             k: v for k, v in resp.headers.items() if k.lower() not in _DROP_RESPONSE_HEADERS
         }
