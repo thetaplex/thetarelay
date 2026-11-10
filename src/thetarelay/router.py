@@ -17,7 +17,7 @@ from typing import Any, Literal
 import httpx
 
 from .config import RouterConfig
-from .steps import Group, classify
+from .steps import Group, _tokenize, _Unparsable, classify
 
 Tier = Literal["lite", "frontier"]
 
@@ -38,10 +38,19 @@ JUDGE_QUESTION = {
 }
 
 # Signs that a tool result is a failure. A failure keeps the conversation on the frontier tier.
+# Structured signals come first (see _failure); keywords are the fallback.
 _FAILURE = re.compile(
-    r"\b(FAILED|FAILURES?|Traceback|AssertionError|panicked|Exception|"
-    r"[Ee]rror:|exit (code|status) [1-9]\d*|non-zero exit)"
+    r"\b(FAILED|FAILURES?|Traceback|AssertionError|panicked|Exception|[Ee]rror:|non-zero exit)"
 )
+# Pi: `Command exited with code N` (only when N is not 0); others: `exit code N`, `exit status N`.
+_EXIT = re.compile(r"Command exited with code (\d+)|\b(?i:exit (?:code|status)):? (\d+)")
+# Test runner summaries: pytest, unittest, Jest/Vitest, cargo.
+_SUMMARY = re.compile(
+    r"\b\d+ (passed|failed|errors?)\b|^FAILED \((failures|errors)=|^OK( \(.*\))?$"
+    r"|\bTests:\s+\d|\btest result: (ok|FAILED)\b"
+)
+_SUMMARY_FAILED = re.compile(r"\b[1-9]\d* (failed|errors?)\b|FAILED")
+_SEARCHES = frozenset({"rg", "grep", "egrep", "fgrep"})
 _REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
 _STEP_LIMIT = 12
 _GOAL_CHARS = 300
@@ -54,10 +63,15 @@ class Event:
 
     kind: Literal["user", "assistant", "call", "result"]
     text: str
-    failed: bool = False
-    # Results only: step group and shell command of the linked call.
+    # Results only: the line that decided the failure (None: not a failure), and the step group
+    # and shell command of the linked call.
+    failure: str | None = None
     group: Group | None = None
     command: str | None = None
+
+    @property
+    def failed(self) -> bool:
+        return self.failure is not None
 
 
 @dataclass
@@ -98,6 +112,45 @@ def _link(calls: dict[str, tuple[str, Any]], call_id: Any) -> tuple[Group, str |
     return classify(name, calls[call_id][1]), cmd if isinstance(cmd, str) else None
 
 
+def _last_program(command: str | None) -> str | None:
+    """Program of the last part of a shell command (None: no command or unparsable)."""
+    try:
+        tokens, _ = _tokenize(command or "")
+    except _Unparsable:
+        return None
+    words: list[str] = []
+    for kind, text in tokens:
+        if kind == "op":
+            words = []
+        else:
+            words.append(text)
+    while words and ("=" in words[0] or words[0] == "rtk" or words[:2] == ["rtk", "proxy"]):
+        words = words[2:] if words[:2] == ["rtk", "proxy"] else words[1:]
+    return words[0].rsplit("/", 1)[-1] if words else None
+
+
+def _failure(text: str, is_error: bool, group: Group, command: str | None) -> str | None:
+    """The line that decides the step failed, or None. The first signal present decides:
+    the error flag, an exit status, a test summary, then keywords (not for read steps)."""
+    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
+    exits = [(ln, int(m[1] or m[2])) for ln in lines if (m := _EXIT.search(ln))]
+    keyword = next((ln for ln in lines if _FAILURE.search(ln)), None)
+    if is_error:
+        return next((ln for ln, code in exits if code), keyword or (lines[0] if lines else ""))
+    if exits:
+        line, code = exits[-1]
+        if code == 0 or (code == 1 and group == "read" and _last_program(command) in _SEARCHES):
+            return None
+        return line
+    if group == "read":
+        return None
+    summaries = [ln for ln in lines if _SUMMARY.search(ln)]
+    if summaries:
+        last = summaries[-1].strip("= ")  # pytest frames its summary in ====
+        return last if _SUMMARY_FAILED.search(last) else None
+    return keyword
+
+
 def events(body: dict[str, Any], provider: str) -> list[Event]:
     """Flatten the conversation of an Anthropic or OpenAI request into steps."""
     out: list[Event] = []
@@ -110,7 +163,7 @@ def events(body: dict[str, Any], provider: str) -> list[Event]:
             if role == "tool":
                 text = _text(content)
                 group, cmd = _link(calls, msg.get("tool_call_id"))
-                out.append(Event("result", text, bool(_FAILURE.search(text)), group, cmd))
+                out.append(Event("result", text, _failure(text, False, group, cmd), group, cmd))
                 continue
             if text := _text(content).strip():
                 out.append(Event("assistant" if role == "assistant" else "user", text))
@@ -132,9 +185,9 @@ def events(body: dict[str, Any], provider: str) -> list[Event]:
                 out.append(Event("call", f"{block.get('name', '')} {args}"))
             elif kind == "tool_result":
                 text = _text(block.get("content", ""))
-                failed = bool(block.get("is_error")) or bool(_FAILURE.search(text))
                 group, cmd = _link(calls, block.get("tool_use_id"))
-                out.append(Event("result", text, failed, group, cmd))
+                failure = _failure(text, block.get("is_error") is True, group, cmd)
+                out.append(Event("result", text, failure, group, cmd))
     # Agent harness reminders are not part of the task.
     for e in out:
         if e.kind == "user":
@@ -150,9 +203,8 @@ def _one_line(text: str, limit: int) -> str:
 def _step_line(e: Event) -> str:
     if e.kind == "result":
         lines = e.text.strip().splitlines() or [""]
-        if e.failed:
-            hit = next((ln for ln in lines if _FAILURE.search(ln)), lines[0])
-            return "result FAILED: " + _one_line(hit, 120)
+        if e.failure is not None:
+            return "result FAILED: " + _one_line(e.failure, 120)
         return "result ok: " + _one_line(lines[-1], 80)
     return f"{e.kind}: " + _one_line(e.text, 120)
 

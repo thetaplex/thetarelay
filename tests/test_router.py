@@ -726,3 +726,119 @@ def test_unlinked_result_is_irreversible(build: Any, provider: str) -> None:
     assert (res.group, res.command) == ("irreversible", None)
     other = [e for e in events(build(calls, []), provider) if e.kind == "call"]
     assert (other[0].group, other[0].command) == (None, None)
+
+
+def _result(
+    name: str, args: dict[str, Any], content: str, provider: str = "anthropic", **extra: Any
+) -> Any:
+    """The result event of one tool call and its result."""
+    if provider == "openai":
+        body = _oai([("c", name, args)], [])
+        body["messages"].append({"role": "tool", "tool_call_id": "c", "content": content})
+    else:
+        body = _anth([("c", name, args)], ["c"])
+        body["messages"][1]["content"][0].update(content=content, **extra)
+    (res,) = [e for e in events(body, provider) if e.kind == "result"]
+    return res
+
+
+def _sh(command: str, output: str, provider: str = "anthropic") -> Any:
+    return _result("bash", {"command": command}, output, provider)
+
+
+def test_error_flag_is_a_failure_even_for_reads() -> None:
+    res = _result("read", {"path": "a.py"}, "no such file", is_error=True)
+    assert res.failed
+    assert "result FAILED: no such file" in summarize([res])["recent_steps"]
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_pi_exit_status_without_a_keyword_is_a_failure(provider: str) -> None:
+    res = _sh("make build", "building\nCommand exited with code 2", provider)
+    assert res.failed
+    assert "result FAILED: Command exited with code 2" in summarize([res])["recent_steps"]
+
+
+@pytest.mark.parametrize(
+    "output", ["Traceback (most recent call last)\nexit code 0", "Error: x\nexit status 0"]
+)
+def test_exit_status_zero_is_success(output: str) -> None:
+    assert not _sh("make build", output).failed
+
+
+@pytest.mark.parametrize("line", ["exit code 3", "exit status 1"])
+def test_other_exit_status_formats(line: str) -> None:
+    res = _sh("make build", f"compiling\n{line}")
+    assert res.failed
+    assert f"result FAILED: {line}" in summarize([res])["recent_steps"]
+
+
+def test_passing_test_summary_beats_error_text() -> None:
+    out = "test_messages checks Error: bad input\nAssertionError expected\n41 passed in 2.1s"
+    assert not _sh("pytest", out).failed
+
+
+def test_failing_test_summary_is_shown_to_the_judge() -> None:
+    res = _sh("pytest", "collected 44 items\n==== 3 failed, 41 passed in 2.1s ====")
+    assert res.failed
+    assert "result FAILED: 3 failed, 41 passed in 2.1s" in summarize([res])["recent_steps"]
+
+
+@pytest.mark.parametrize(
+    ("output", "failed"),
+    [
+        ("Ran 4 tests in 0.1s\n\nFAILED (failures=2)", True),
+        ("Error: expected\nRan 4 tests in 0.1s\n\nOK", False),
+        ("Tests:       1 failed, 4 passed, 5 total", True),
+        ("error: expected\nTests:       5 passed, 5 total", False),
+        ("test result: FAILED. 3 passed; 1 failed; 0 ignored", True),
+        ("panicked at expected\ntest result: ok. 3 passed; 0 failed; 0 ignored", False),
+        ("1 error in 0.3s", True),
+        ("3 failed, 1 passed\nrerun:\n4 passed in 1.0s", False),  # the last summary wins
+    ],
+)
+def test_test_runner_summaries(output: str, failed: bool) -> None:
+    assert _sh("just test", output).failed is failed
+
+
+def test_run_step_without_structured_signal_falls_back_to_keywords() -> None:
+    res = _sh("python app.py", 'Traceback (most recent call last):\n  File "app.py"')
+    assert res.failed
+    assert "result FAILED: Traceback (most recent call last):" in summarize([res])["recent_steps"]
+
+
+def test_reading_a_file_that_mentions_errors_is_not_a_failure() -> None:
+    src = 'try:\n    run()\nexcept Exception as e:\n    raise ValueError("Error: bad")'
+    res = _result("read", {"path": "a.py"}, src)
+    assert not res.failed
+    assert "result ok" in summarize([res])["recent_steps"]
+
+
+def test_read_only_shell_command_output_is_not_a_failure() -> None:
+    assert not _sh("cat .docs/instructions.md", "# Notes\n## Exception messages\n3 failed").failed
+
+
+@pytest.mark.parametrize(
+    "command", ["rg foo", "grep -r foo src", "cat a | egrep foo", "fgrep x f", "rtk rg foo"]
+)
+def test_search_with_no_match_is_not_a_failure(command: str) -> None:
+    assert not _sh(command, "Command exited with code 1").failed
+
+
+@pytest.mark.parametrize(
+    ("command", "output"),
+    [
+        ("cat missing.py", "cat: missing.py: No such file\nCommand exited with code 1"),
+        ("rg foo", "Command exited with code 2"),
+        ("rg foo && cat x", "Command exited with code 1"),
+    ],
+)
+def test_read_command_that_fails(command: str, output: str) -> None:
+    assert _sh(command, output).failed
+
+
+def test_unlinked_search_exit_one_is_a_failure() -> None:
+    body = _anth([], ["zzz"])
+    body["messages"][1]["content"][0]["content"] = "Command exited with code 1"
+    (res,) = [e for e in events(body, "anthropic") if e.kind == "result"]
+    assert res.failed
