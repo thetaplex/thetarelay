@@ -2,20 +2,29 @@
 
 ## Why
 
-A failed step keeps the conversation on the frontier tier and is shown to the judge as
-`result FAILED:`. Today any tool result that matches a keyword (`Exception`, `Error:`,
-`Traceback`) counts as a failure, including file reads and search output. Reading a Python file
-with `except Exception` marks the step as failed, which pushes the judge toward "hard" and would
-trigger the stay rule if `THETARELAY_STAY_REQUESTS` were set.
+A failed step keeps the conversation on the frontier tier. It is shown to the judge as
+`result FAILED:`, counted in `failed_results`, and starts the stay rule
+(`THETARELAY_STAY_REQUESTS`). Today a tool result counts as failed when it matches a keyword
+(`Exception`, `Error:`, `Traceback`). This goes wrong in two ways:
+
+- **False failures.** Reading code or docs that mention errors counts as a failure. In the routing
+  eval turn logs, about 12% of `read` results are marked `FAILED`, for example
+  `class EmptyListException(Exception):` and `## Customizing and Raising Exceptions`. Read-only
+  shell commands such as `cat .docs/*` fail the same way.
+- **Missed failures.** Pi reports a failed command as `Command exited with code N`, and only when
+  N is not 0. The keyword pattern matches `exit code N` but not this line, so a failed command
+  counts only if its output also happens to contain a keyword.
 
 ## What Changes
 
-- Link each tool result to its tool call (`tool_use_id` / `tool_call_id`) and its tool name.
-- Check for failure only on results of shell commands and other tools that run code, not on
-  `read`, `grep`, `glob` or `ls` results.
-- Prefer structured signals over keywords: the result's `is_error` flag, the exit status the
-  agent reports (Pi: `Command exited with code N`), and test runner summaries
-  (`3 failed, 41 passed`). Keywords are used only when none of these is present.
+- Link each tool result to its tool call (`tool_use_id` / `tool_call_id`), and classify the call
+  with the step groups of `step-classification`.
+- Decide failure from structured signals first: the result's `is_error` flag, a reported exit
+  status (including Pi's `Command exited with code N`), then a test runner summary
+  (`3 failed, 41 passed`).
+- Use keywords only for `run`, `write` and `irreversible` steps that have no structured signal.
+  `read` steps never fail on keywords.
+- Exit code 1 from a `read` search command (`rg`, `grep`) means "no match", not failure.
 - A test summary with zero failures is not a failure, even if the output contains `Error:`.
 
 ## Capabilities
@@ -26,11 +35,13 @@ trigger the stay rule if `THETARELAY_STAY_REQUESTS` were set.
 
 ### Modified Capabilities
 
-None (no specs exist yet; current behaviour is undocumented in specs).
+None.
 
 ## Impact
 
-- `src/thetarelay/router.py`: `events()` and the failure check; the judge summary changes for
-  conversations that read files with error keywords.
-- Judge input changes, so the judge threshold should be re-checked on `scripts/judge_eval`.
-- Uses the read-tool list from `01-add-step-classification`, not the step groups.
+- `src/thetarelay/router.py`: `events()` and the failure check. Judge summaries change for
+  conversations that read files with error keywords, and for Pi commands that exit non-zero
+  without a keyword.
+- Judge input changes. Re-score the routing eval turn logs and check the judge threshold;
+  `scripts/judge_eval` uses hand-written summaries and does not go through `events()`.
+- Uses `classify` from `step-classification`.

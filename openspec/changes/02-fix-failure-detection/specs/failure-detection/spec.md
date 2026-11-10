@@ -7,45 +7,35 @@ real failure keeps the frontier in charge and a file that only mentions errors d
 
 ## ADDED Requirements
 
-### Requirement: Only executed commands can fail
+### Requirement: Results are linked to their calls
 
-The system SHALL treat a tool result as a possible failure only if its tool call is a shell
-command or another tool that executes code. Results of read tools SHALL never count as failures.
+The system SHALL link each tool result to its tool call by id, and give the result the step
+group of that call. A result whose id matches no call SHALL get the group `irreversible`.
 
-#### Scenario: Reading a file that mentions errors
+#### Scenario: Parallel calls
 
-- **WHEN** the agent reads a Python file containing `except Exception as e:` and `raise ValueError("Error: bad")`
-- **THEN** the step is not a failure, and the judge summary shows `result ok`
-
-#### Scenario: Grep output with error lines
-
-- **WHEN** the agent runs the `grep` tool for `Error:` and gets matching lines
-- **THEN** the step is not a failure
-
-#### Scenario: Search with no match
-
-- **WHEN** a shell command `rg foo` or `grep foo a.py` exits with code 1 and no output
-- **THEN** the step is not a failure
+- **WHEN** a request has two tool calls and their results come in the opposite order
+- **THEN** each result gets the group of its own call
 
 #### Scenario: Unlinked result
 
 - **WHEN** a tool result's id matches no tool call in the request
-- **THEN** it is treated as the result of a shell command
+- **THEN** it gets the group `irreversible`
 
 ### Requirement: Structured signals take precedence
 
-The system SHALL decide failure from structured signals when present, in this order: the
-result's error flag, a reported exit status, a test runner summary. Keyword matching SHALL apply
-only when none is present.
+The system SHALL decide failure from the first signal present, in this order: the result's
+error flag, a reported exit status, a test runner summary. Keyword matching SHALL apply only
+when none is present, and never to `read` steps.
 
 #### Scenario: Error flag
 
 - **WHEN** an Anthropic tool result has `is_error: true`
 - **THEN** the step is a failure
 
-#### Scenario: Non-zero exit status
+#### Scenario: Pi exit status without a keyword
 
-- **WHEN** a shell result contains `Command exited with code 2`
+- **WHEN** a shell result ends with `Command exited with code 2` and contains no error keyword
 - **THEN** the step is a failure
 
 #### Scenario: Passing test summary with error text
@@ -61,13 +51,41 @@ only when none is present.
 
 #### Scenario: No structured signal
 
-- **WHEN** a shell result has no error flag, exit status or test summary, and contains `Traceback`
+- **WHEN** a `run` step's result has no error flag, exit status or test summary, and contains
+  `Traceback`
+- **THEN** the step is a failure
+
+### Requirement: Read steps do not fail on content
+
+The system SHALL NOT mark a `read` step as failed because of its output text. A `read` step
+SHALL fail only on an error flag or a non-zero exit status, and exit code 1 from a search
+command (`rg`, `grep`) SHALL NOT count.
+
+#### Scenario: Reading a file that mentions errors
+
+- **WHEN** the agent reads a Python file containing `except Exception as e:` and
+  `raise ValueError("Error: bad")`
+- **THEN** the step is not a failure, and the judge summary shows `result ok`
+
+#### Scenario: Read-only shell command
+
+- **WHEN** a shell command `cat .docs/instructions.md` prints `## Exception messages`
+- **THEN** the step is not a failure
+
+#### Scenario: Search with no match
+
+- **WHEN** a shell command `rg foo` exits with `Command exited with code 1` and no other output
+- **THEN** the step is not a failure
+
+#### Scenario: Read command that fails
+
+- **WHEN** a shell command `cat missing.py` exits with `Command exited with code 1`
 - **THEN** the step is a failure
 
 ### Requirement: Failure line shown to the judge
 
-The system SHALL show the judge the line that decided the failure (the exit status, the test
-summary, or the first matching keyword line).
+The system SHALL show the judge the line that decided the failure: the exit status, the test
+summary, or the first matching keyword line.
 
 #### Scenario: Test summary decides
 
