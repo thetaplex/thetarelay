@@ -25,6 +25,7 @@ import tempfile
 import time
 import urllib.request
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -165,12 +166,15 @@ def turn_logs(results: Path, arm: str) -> list[Path]:
     return sorted(p for p in results.glob("turns-*.jsonl") if re.fullmatch(pat, p.name))
 
 
-def arm_env(arm: str, results: Path) -> dict[str, str] | None:
-    """Proxy environment for an arm; None when a random arm's routed arm has no turn logs."""
+def arm_env(arm: str, results: Path, prefix: str = "") -> dict[str, str] | None:
+    """Proxy environment for an arm; None when a random arm's routed arm has no turn logs.
+
+    `prefix` names the routed arm's turn logs (the app eval's arms are `pi-<arm>`).
+    """
     env = dict(ARMS[arm])
     if arm.startswith("random"):
         routed = "judge" if arm == "random" else arm.removeprefix("random-")
-        share = local_share(turn_logs(results, routed))
+        share = local_share(turn_logs(results, prefix + routed))
         if share is None:
             return None
         env["THETARELAY_RANDOM_LITE_SHARE"] = f"{share:.3f}"
@@ -231,27 +235,38 @@ def _ci(lo: float | None, hi: float | None, scale: float = 1, fmt: str = ".1f") 
 
 
 def _run_costs(att: list[dict[str, Any]], rows: list[dict[str, Any]]) -> dict[int, float]:
-    """Cost per task of each run: that run's turn-log cost over its attempted tasks."""
+    """Cost per task of each run: that run's cost over its attempted tasks.
+
+    The cost comes from the attempts' own `cost_usd` when they all carry one (app eval
+    builds), otherwise from the turn logs.
+    """
     tasks: dict[int, int] = defaultdict(int)
     for r in att:
         tasks[r["run"]] += 1
+    own = all("cost_usd" in r for r in att)
     cost: dict[int, float] = defaultdict(float)
-    for t in rows:
+    for t in att if own else rows:
         cost[t["run"]] += t.get("cost_usd") or 0
     return {run: cost[run] / n for run, n in tasks.items() if run in cost}
 
 
-def build_report(attempts: list[dict[str, Any]], turns: dict[str, list[dict[str, Any]]]) -> str:
-    """Per-arm table plus routed-vs-random paired differences.
+def build_report(
+    attempts: list[dict[str, Any]],
+    turns: dict[str, list[dict[str, Any]]],
+    arms: Iterable[str] = ARMS,
+    prefix: str = "",
+) -> str:
+    """Per-arm table plus routed-vs-random paired differences, paired by `(run, exercise)`.
 
-    `turns` maps arm -> turn-log rows, each tagged with its `run`.
+    `turns` maps arm -> turn-log rows, each tagged with its `run`. `prefix` is put before the
+    routed and random arm names when pairing them (the app eval's arms are `pi-<arm>`).
     """
     by_arm: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in attempts:
         by_arm[r["arm"]].append(r)
     out = [f"{'arm':22}{'runs':>5}{'pass %':>8}  {'$/task':<22}{'lite %':>7}"]
     stats: dict[str, tuple[dict[tuple[int, str], bool], dict[int, float], int]] = {}
-    for arm in ARMS:
+    for arm in arms:
         att = by_arm.get(arm)
         if not att:
             continue
@@ -271,10 +286,10 @@ def build_report(attempts: list[dict[str, Any]], turns: dict[str, list[dict[str,
             line += f"  {100 * sum(t['tier'] == 'lite' for t in rows) / len(rows):.0f}%"
         out.append(line + ("  too few runs" if few else ""))
     out += ["", "routed vs matched random arm (difference, 95% interval)"]
-    for routed in ("judge", "triage", "hybrid"):
-        rnd = f"random-{routed}"
-        if rnd not in stats and routed == "judge":
-            rnd = "random"  # alias of random-judge
+    for base in ("judge", "triage", "hybrid"):
+        routed, rnd = prefix + base, f"{prefix}random-{base}"
+        if rnd not in stats and base == "judge":
+            rnd = f"{prefix}random"  # alias of random-judge
         if routed not in stats or rnd not in stats:
             continue
         (pa, ca, na), (pb, cb, nb) = stats[routed], stats[rnd]

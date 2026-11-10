@@ -28,17 +28,15 @@ the frontier model again, so they add time and do not save cost.
 
 ## Measure your models
 
-In a source checkout, run the app evaluation once without routing and once with routing. Then
-compare `api_cost_usd` in the two `builds.jsonl` files.
+In a source checkout, run the app evaluation without routing (`pi-frontier`) and with routing
+(`pi-hybrid`), then print the report to compare pass rate and cost per build.
 
 ```sh
 export OPENROUTER_API_KEY=sk-or-...
 export THETARELAY_LITE_API_KEY=$OPENROUTER_API_KEY
 export THETARELAY_FRONTIER_MODEL=<frontier model> THETARELAY_LITE_MODEL=<lite model>
-APP_EVAL_RESULTS=scripts/app_eval/results-off THETARELAY_ROUTE_MODE=frontier \
-  uv run python scripts/app_eval/run.py run --runs 3 --arms pi
-APP_EVAL_RESULTS=scripts/app_eval/results-on \
-  uv run python scripts/app_eval/run.py run --runs 3 --arms pi
+uv run python scripts/app_eval/run.py run --runs 3 --specs bookmarks --arms pi-frontier,pi-hybrid
+uv run python scripts/app_eval/run.py report
 ```
 
-Each command runs 3 agent sessions with your models.
+This runs 6 agent sessions with your models: 3 per arm.

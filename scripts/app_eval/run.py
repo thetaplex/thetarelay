@@ -1,17 +1,24 @@
-"""Build the SPEC.md app with two setups and compare hidden-test results and token use.
+"""Build each app spec with several setups and compare hidden-test results and cost.
 
-    uv run python scripts/app_eval/run.py run --runs 3
+    uv run python scripts/app_eval/run.py run --runs 3 --specs bookmarks --arms claude,pi
     uv run python scripts/app_eval/run.py report
 
-Arms:
-  claude  Claude Code (Opus 5.5) + Headroom proxy (ANTHROPIC_BASE_URL from your settings) + RTK
-          hook, with your normal Claude Code configuration.
-  pi      Pi + RTK extension -> ThetaRelay (Headroom middleware on) -> Haiku 5.5 (lite) or
-          Opus 5.5 (frontier), both on OpenRouter. Clean Pi config, no skills. Override with
-          THETARELAY_FRONTIER_MODEL, THETARELAY_LITE_MODEL, THETARELAY_ROUTE_MODE and so on.
+Specs live in specs/<name>/ (starter/, hidden_tests/, reference/); `--specs` picks some
+(default: all).
 
-Each build starts from a copy of starter/ in a fresh directory. Afterwards the hidden tests are
-copied in and run. Builds, raw agent output and turn logs are kept in results/.
+Arms:
+  claude    Claude Code (Opus 5.5) + Headroom proxy (ANTHROPIC_BASE_URL from your settings) + RTK
+            hook, with your normal Claude Code configuration.
+  pi-<arm>  Pi + RTK extension -> ThetaRelay (Headroom middleware on) -> Haiku 5.5 (lite) or
+            Opus 5.5 (frontier), both on OpenRouter. Clean Pi config, no skills. <arm> is any
+            routing eval arm (pi-hybrid, pi-judge, pi-random-hybrid, pi-hybrid-no-triage, ...);
+            `pi` is an alias of pi-hybrid. Random arms take the lite share of their routed arm's
+            turn logs for the same spec. Override models with THETARELAY_FRONTIER_MODEL,
+            THETARELAY_LITE_MODEL and so on.
+
+Each build starts from a copy of the spec's starter/ in a fresh directory. Afterwards the hidden
+tests are copied in and run. Results go to results/builds.jsonl, keyed by (spec, arm, run);
+builds, raw agent output and turn logs (results/<spec>/turns-<arm>-<run>.jsonl) are kept too.
 """
 
 from __future__ import annotations
@@ -22,13 +29,18 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from routing_eval import run as routing
+
 HERE = Path(__file__).resolve().parent
+SPECS = HERE / "specs"
 REPO = HERE.parents[1]
 RESULTS = Path(os.environ.get("APP_EVAL_RESULTS", HERE / "results"))
 PORT = 8795
@@ -55,9 +67,33 @@ PI_ENV = {
 }
 
 
-def fresh_workdir(name: str) -> Path:
+def select_specs(names: str, root: Path | None = None) -> list[Path]:
+    """Spec folders under `root` (default SPECS), all of them or the comma-separated `names`."""
+    root = root or SPECS
+    specs = sorted(p for p in root.iterdir() if (p / "starter").is_dir())
+    if not names:
+        return specs
+    wanted = set(names.split(","))
+    if unknown := wanted - {p.name for p in specs}:
+        raise SystemExit(f"unknown specs: {', '.join(sorted(unknown))}")
+    return [p for p in specs if p.name in wanted]
+
+
+def canonical_arm(arm: str) -> str:
+    return "pi-hybrid" if arm == "pi" else arm
+
+
+def arm_env(arm: str, spec_results: Path) -> dict[str, str] | None:
+    """Proxy environment for a pi arm; None when a random arm's routed arm has no turn logs."""
+    base = canonical_arm(arm).removeprefix("pi-")
+    if not arm.startswith("pi") or base not in routing.ARMS:
+        raise SystemExit(f"unknown arm: {arm}")
+    return routing.arm_env(base, spec_results, prefix="pi-")
+
+
+def fresh_workdir(name: str, spec: Path) -> Path:
     work = Path(tempfile.mkdtemp(prefix=f"app-eval-{name}-"))
-    shutil.copytree(HERE / "specs" / "bookmarks" / "starter", work, dirs_exist_ok=True)
+    shutil.copytree(spec / "starter", work, dirs_exist_ok=True)
     return work
 
 
@@ -105,8 +141,8 @@ def run_claude(work: Path, out: Path) -> dict[str, Any]:
     return rec
 
 
-def start_proxy(turn_log: Path) -> subprocess.Popen[bytes]:
-    env = {**os.environ, **PI_ENV, "THETARELAY_TURN_LOG": str(turn_log)}
+def start_proxy(arm_env: dict[str, str], turn_log: Path) -> subprocess.Popen[bytes]:
+    env = {**os.environ, **PI_ENV, **arm_env, "THETARELAY_TURN_LOG": str(turn_log)}
     proc = subprocess.Popen(
         ["uv", "run", "thetarelay", "proxy", "--port", str(PORT)],
         cwd=REPO,
@@ -153,9 +189,8 @@ def pi_agent_dir() -> tuple[Path, Path]:
     return agent, agent / "extensions" / "rtk.ts"
 
 
-def run_pi(work: Path, out: Path) -> dict[str, Any]:
-    turn_log = out / "turns.jsonl"
-    proxy = start_proxy(turn_log)
+def run_pi(work: Path, out: Path, env: dict[str, str], turn_log: Path) -> dict[str, Any]:
+    proxy = start_proxy(env, turn_log)
     agent, rtk_ext = pi_agent_dir()
     started = time.perf_counter()
     try:
@@ -210,10 +245,8 @@ def run_pi(work: Path, out: Path) -> dict[str, Any]:
     return rec
 
 
-def grade(work: Path) -> dict[str, Any]:
-    hidden = work / "tests_hidden"
-    hidden.mkdir(exist_ok=True)
-    shutil.copy(HERE / "specs" / "bookmarks" / "hidden_tests" / "test_hidden_api.py", hidden)
+def grade(work: Path, spec: Path) -> dict[str, Any]:
+    shutil.copytree(spec / "hidden_tests", work / "tests_hidden", dirs_exist_ok=True)
 
     def pytest(target: str) -> tuple[int, int]:
         try:
@@ -252,42 +285,88 @@ def grade(work: Path) -> dict[str, Any]:
 def run(args: argparse.Namespace) -> None:
     RESULTS.mkdir(exist_ok=True)
     log = RESULTS / "builds.jsonl"
-    done = (
-        {(r["arm"], r["run"]) for r in map(json.loads, log.read_text().splitlines())}
-        if log.exists()
-        else set()
-    )
-    for run_no in range(args.runs):
-        for arm in args.arms.split(","):
-            if (arm, run_no) in done:
-                continue
-            out = RESULTS / f"{arm}-{run_no}"
-            out.mkdir(exist_ok=True)
-            work = fresh_workdir(f"{arm}-{run_no}")
-            print(f"{time.strftime('%H:%M:%S')} start {arm} run {run_no}  ({work})", flush=True)
-            rec = (run_claude if arm == "claude" else run_pi)(work, out)
-            rec.update(grade(work))
-            shutil.copytree(
-                work,
-                out / "build",
-                dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns(".venv", "__pycache__", "*.db", "*.sqlite"),
-            )
-            shutil.rmtree(work, ignore_errors=True)
-            rec = {"arm": arm, "run": run_no, "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), **rec}
-            with log.open("a") as fh:
-                fh.write(json.dumps(rec) + "\n")
-            print(
-                f"{time.strftime('%H:%M:%S')} done  {arm} run {run_no}: hidden "
-                f"{rec['hidden_passed']}/34, {rec['seconds']:.0f}s, "
-                f"api-price ${rec.get('api_cost_usd') or 0:.3f}, {rec['status']}",
-                flush=True,
-            )
+    rows = list(map(json.loads, log.read_text().splitlines())) if log.exists() else []
+    done = {(r.get("spec", "bookmarks"), canonical_arm(r["arm"]), r["run"]) for r in rows}
+    arms = [canonical_arm(a) for a in args.arms.split(",")]
+    for spec in select_specs(args.specs):
+        spec_results = RESULTS / spec.name
+        spec_results.mkdir(exist_ok=True)
+        for run_no in range(args.runs):
+            for arm in arms:
+                if (spec.name, arm, run_no) in done:
+                    continue
+                env = None if arm == "claude" else arm_env(arm, spec_results)
+                if arm != "claude" and env is None:
+                    print(f"skipping {arm} on {spec.name}: no turn logs for its routed arm yet")
+                    continue
+                out = spec_results / f"{arm}-{run_no}"
+                out.mkdir(exist_ok=True)
+                work = fresh_workdir(f"{spec.name}-{arm}-{run_no}", spec)
+                print(
+                    f"{time.strftime('%H:%M:%S')} start {spec.name} {arm} run {run_no}  ({work})",
+                    flush=True,
+                )
+                if env is None:
+                    rec = run_claude(work, out)
+                else:
+                    turn_log = spec_results / f"turns-{arm}-{run_no}.jsonl"
+                    rec = run_pi(work, out, env, turn_log)
+                rec.update(grade(work, spec))
+                shutil.copytree(
+                    work,
+                    out / "build",
+                    dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns(".venv", "__pycache__", "*.db", "*.sqlite"),
+                )
+                shutil.rmtree(work, ignore_errors=True)
+                rec = {
+                    "spec": spec.name,
+                    "arm": arm,
+                    "run": run_no,
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                    **rec,
+                    **(env or {}),
+                }
+                with log.open("a") as fh:
+                    fh.write(json.dumps(rec) + "\n")
+                done.add((spec.name, arm, run_no))
+                total = rec["hidden_passed"] + max(rec["hidden_failed"], 0)
+                print(
+                    f"{time.strftime('%H:%M:%S')} done  {spec.name} {arm} run {run_no}: hidden "
+                    f"{rec['hidden_passed']}/{total}, {rec['seconds']:.0f}s, "
+                    f"api-price ${rec.get('api_cost_usd') or 0:.3f}, {rec['status']}",
+                    flush=True,
+                )
+
+
+def build_report(builds: list[dict[str, Any]], turns: dict[str, list[dict[str, Any]]]) -> str:
+    """The routing eval's report over builds, pairing routed and random arms by (spec, run).
+
+    A build passes when all its hidden tests pass. Rows from before specs existed count as
+    `bookmarks`, and arm `pi` as `pi-hybrid`.
+    """
+    attempts = [
+        {
+            "arm": canonical_arm(b["arm"]),
+            "run": b["run"],
+            "exercise": b.get("spec", "bookmarks"),
+            "passed": b["hidden_passed"] > 0 and b["hidden_failed"] == 0,
+            "cost_usd": b.get("api_cost_usd") or 0,
+        }
+        for b in builds
+    ]
+    arms = ["claude", *(f"pi-{a}" for a in routing.ARMS)]
+    return routing.build_report(attempts, turns, arms, prefix="pi-")
 
 
 def report(_: argparse.Namespace) -> None:
-    for r in map(json.loads, (RESULTS / "builds.jsonl").read_text().splitlines()):
-        print(json.dumps(r))
+    builds = [json.loads(ln) for ln in (RESULTS / "builds.jsonl").read_text().splitlines()]
+    turns: dict[str, list[dict[str, Any]]] = {}
+    for p in RESULTS.glob("*/turns-*.jsonl"):
+        arm, run_no = p.stem.removeprefix("turns-").rsplit("-", 1)
+        rows = [{**json.loads(ln), "run": int(run_no)} for ln in p.read_text().splitlines()]
+        turns.setdefault(arm, []).extend(rows)
+    print(build_report(builds, turns))
 
 
 def main() -> None:
@@ -296,6 +375,7 @@ def main() -> None:
     r = sub.add_parser("run")
     r.add_argument("--runs", type=int, default=3)
     r.add_argument("--arms", default="claude,pi")
+    r.add_argument("--specs", default="", help="comma-separated spec names (default: all)")
     sub.add_parser("report")
     args = parser.parse_args()
     {"run": run, "report": report}[args.cmd](args)

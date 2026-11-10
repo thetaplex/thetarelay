@@ -1,8 +1,12 @@
+import argparse
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+
+import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
@@ -164,3 +168,122 @@ def test_report_counts_unpaired_and_handles_missing_turns() -> None:
     att = _attempts("hybrid", 3, [True, False]) + _attempts("random-hybrid", 3, [True])
     out = routing.build_report(att, {})
     assert "unpaired" in out
+
+
+def _load_app() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("app_eval_run", SCRIPTS / "app_eval" / "run.py")
+    assert spec
+    assert spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["app_eval_run"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+app = _load_app()
+
+
+def _specs(root: Path, *names: str) -> None:
+    for n in names:
+        (root / n / "starter").mkdir(parents=True)
+        (root / n / "starter" / "SPEC.md").write_text(n)
+        (root / n / "hidden_tests").mkdir()
+        (root / n / "hidden_tests" / "test_hidden.py").write_text("")
+
+
+def test_app_ships_several_specs() -> None:
+    names = [p.name for p in app.select_specs("")]
+    assert "bookmarks" in names
+    for p in app.select_specs(""):
+        assert (p / "starter" / "SPEC.md").is_file()
+        assert any((p / "hidden_tests").glob("test_*.py"))
+
+
+def test_specs_filter(tmp_path: Path) -> None:
+    _specs(tmp_path, "a", "b", "c")
+    assert [p.name for p in app.select_specs("", tmp_path)] == ["a", "b", "c"]
+    assert [p.name for p in app.select_specs("c,a", tmp_path)] == ["a", "c"]
+    with pytest.raises(SystemExit):
+        app.select_specs("nope", tmp_path)
+
+
+def test_run_builds_every_spec_for_every_arm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    specs, results = tmp_path / "specs", tmp_path / "results"
+    _specs(specs, "a", "b")
+    monkeypatch.setattr(app, "SPECS", specs)
+    monkeypatch.setattr(app, "RESULTS", results)
+    seen: list[tuple[str, dict[str, str] | None]] = []
+
+    def fake_claude(work: Path, out: Path) -> dict[str, Any]:
+        seen.append(((work / "SPEC.md").read_text(), None))
+        return {"status": "ok", "seconds": 1.0, "api_cost_usd": 1.0}
+
+    def fake_pi(work: Path, out: Path, env: dict[str, str], turn_log: Path) -> dict[str, Any]:
+        seen.append(((work / "SPEC.md").read_text(), env))
+        assert turn_log.parent == results / (work / "SPEC.md").read_text()
+        return {"status": "ok", "seconds": 1.0, "api_cost_usd": 0.5}
+
+    def fake_grade(work: Path, spec: Path) -> dict[str, Any]:
+        assert spec.name == (work / "SPEC.md").read_text()
+        return {"hidden_passed": 3, "hidden_failed": 0}
+
+    monkeypatch.setattr(app, "run_claude", fake_claude)
+    monkeypatch.setattr(app, "run_pi", fake_pi)
+    monkeypatch.setattr(app, "grade", fake_grade)
+    args = argparse.Namespace(runs=1, arms="claude,pi", specs="")
+    app.run(args)
+    rows = [json.loads(ln) for ln in (results / "builds.jsonl").read_text().splitlines()]
+    assert sorted((r["spec"], r["arm"], r["run"]) for r in rows) == [
+        ("a", "claude", 0),
+        ("a", "pi-hybrid", 0),
+        ("b", "claude", 0),
+        ("b", "pi-hybrid", 0),
+    ]
+    assert ("a", {"THETARELAY_ROUTE_MODE": "hybrid"}) in seen
+    app.run(args)  # everything done: nothing rebuilt
+    assert len(seen) == 4
+
+
+def test_app_arm_env(tmp_path: Path) -> None:
+    assert app.arm_env("pi", tmp_path) == {"THETARELAY_ROUTE_MODE": "hybrid"}
+    assert app.arm_env("pi-hybrid", tmp_path) == app.arm_env("pi", tmp_path)
+    assert app.arm_env("pi-judge", tmp_path) == {"THETARELAY_ROUTE_MODE": "judge"}
+    assert app.arm_env("pi-hybrid-no-triage", tmp_path) == routing.ARMS["hybrid-no-triage"]
+    assert app.arm_env("pi-random-hybrid", tmp_path) is None
+    _turns(tmp_path, "pi-hybrid", 1, 3)
+    assert app.arm_env("pi-random-hybrid", tmp_path) == {
+        "THETARELAY_ROUTE_MODE": "random",
+        "THETARELAY_RANDOM_LITE_SHARE": "0.250",
+    }
+    with pytest.raises(SystemExit):
+        app.arm_env("pi-nope", tmp_path)
+
+
+def test_app_report_pairs_by_spec_and_run() -> None:
+    rows = [
+        {"arm": "pi", "run": 0, "hidden_passed": 34, "hidden_failed": 0, "api_cost_usd": 2.0},
+        {"spec": "todo", "arm": "pi-hybrid", "run": 0, "hidden_passed": 5, "hidden_failed": 1},
+        {
+            "spec": "bookmarks",
+            "arm": "pi-random-hybrid",
+            "run": 0,
+            "hidden_passed": 34,
+            "hidden_failed": 0,
+        },
+        {
+            "spec": "todo",
+            "arm": "claude",
+            "run": 0,
+            "hidden_passed": 6,
+            "hidden_failed": 0,
+            "api_cost_usd": 3.0,
+        },
+    ]
+    turns = {"pi-hybrid": [{"run": 0, "tier": "lite", "cost_usd": 0.0}]}
+    out = app.build_report(rows, turns)
+    assert "pi-hybrid vs pi-random-hybrid" in out
+    assert "(1 pairs, 1 unpaired)" in out
+    claude = next(ln for ln in out.splitlines() if ln.startswith("claude"))
+    assert "$3.000" in claude
