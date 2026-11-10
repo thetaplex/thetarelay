@@ -193,7 +193,8 @@ def _specs(root: Path, *names: str) -> None:
 
 def test_app_ships_several_specs() -> None:
     names = [p.name for p in app.select_specs("")]
-    assert "bookmarks" in names
+    assert len(names) >= 3
+    assert {"bookmarks", "todo-cli", "inventory"} <= set(names)
     for p in app.select_specs(""):
         assert (p / "starter" / "SPEC.md").is_file()
         assert any((p / "hidden_tests").glob("test_*.py"))
