@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Literal
 
 
 def _env(name: str, default: str) -> str:
@@ -83,7 +84,7 @@ class RouterConfig:
     # above the threshold, the frontier model triages instead of a plain frontier request.
     route_mode: str = "hybrid"
     # Why route_mode has its value: "set" (by the user), "default", "openai frontier model".
-    route_mode_reason: str = "default"
+    route_mode_reason: Literal["set", "default", "openai frontier model"] = "default"
     random_lite_share: float = 0.5
     # Share of frontier requests also sent to the lite tier as a shadow; above 0 the judge is
     # asked in every mode.
@@ -123,6 +124,7 @@ class RouterConfig:
     def from_env(cls) -> RouterConfig:
         frontier_model = _env("THETARELAY_FRONTIER_MODEL", cls.frontier_model)
         mode = _env("THETARELAY_ROUTE_MODE", "")
+        reason: Literal["set", "default", "openai frontier model"]
         if mode:
             reason = "set"
         elif frontier_model.startswith("openai/"):

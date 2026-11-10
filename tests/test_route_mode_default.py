@@ -19,21 +19,22 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    ("model", "mode_env", "mode"),
+    ("model", "mode_env", "mode", "reason"),
     [
-        (OPENAI, None, "judge"),
-        ("anthropic/claude-opus-5.5", None, "hybrid"),
-        (OPENAI, "", "judge"),
-        (OPENAI, "hybrid", "hybrid"),
+        (OPENAI, None, "judge", "openai frontier model"),
+        ("anthropic/claude-opus-5.5", None, "hybrid", "default"),
+        (OPENAI, "", "judge", "openai frontier model"),
+        (OPENAI, "hybrid", "hybrid", "set"),
     ],
 )
 def test_default_mode_by_frontier_model(
-    monkeypatch: pytest.MonkeyPatch, model: str, mode_env: str | None, mode: str
+    monkeypatch: pytest.MonkeyPatch, model: str, mode_env: str | None, mode: str, reason: str
 ) -> None:
     monkeypatch.setenv("THETARELAY_FRONTIER_MODEL", model)
     if mode_env is not None:
         monkeypatch.setenv("THETARELAY_ROUTE_MODE", mode_env)
-    assert RouterConfig.from_env().route_mode == mode
+    cfg = RouterConfig.from_env()
+    assert (cfg.route_mode, cfg.route_mode_reason) == (mode, reason)
 
 
 def _startup(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> str:
