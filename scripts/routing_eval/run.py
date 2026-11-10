@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from eval_stats import newcombe
+from eval_stats import MIN_RUNS, bootstrap_mean, bootstrap_paired_diff, newcombe, wilson
 
 HERE = Path(__file__).resolve().parent
 RESULTS = Path(os.environ.get("ROUTING_EVAL_RESULTS", HERE / "results"))
@@ -226,47 +226,84 @@ def run(args: argparse.Namespace) -> None:
                 shutil.rmtree(agent_dir, ignore_errors=True)
 
 
+def _ci(lo: float | None, hi: float | None, scale: float = 1, fmt: str = ".1f") -> str:
+    return "" if lo is None or hi is None else f" [{lo * scale:{fmt}}, {hi * scale:{fmt}}]"
+
+
+def _run_costs(att: list[dict[str, Any]], rows: list[dict[str, Any]]) -> dict[int, float]:
+    """Cost per task of each run: that run's turn-log cost over its attempted tasks."""
+    tasks: dict[int, int] = defaultdict(int)
+    for r in att:
+        tasks[r["run"]] += 1
+    cost: dict[int, float] = defaultdict(float)
+    for t in rows:
+        cost[t["run"]] += t.get("cost_usd") or 0
+    return {run: cost[run] / n for run, n in tasks.items() if run in cost}
+
+
+def build_report(attempts: list[dict[str, Any]], turns: dict[str, list[dict[str, Any]]]) -> str:
+    """Per-arm table plus routed-vs-random paired differences.
+
+    `turns` maps arm -> turn-log rows, each tagged with its `run`.
+    """
+    by_arm: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in attempts:
+        by_arm[r["arm"]].append(r)
+    out = [f"{'arm':22}{'runs':>5}{'pass %':>8}  {'$/task':<22}{'lite %':>7}"]
+    stats: dict[str, tuple[dict[tuple[int, str], bool], dict[int, float], int]] = {}
+    for arm in ARMS:
+        att = by_arm.get(arm)
+        if not att:
+            continue
+        passed = {(r["run"], r["exercise"]): r["passed"] for r in att}
+        costs = _run_costs(att, turns.get(arm, []))
+        nruns = len({r["run"] for r in att})
+        stats[arm] = (passed, costs, nruns)
+        few = nruns < MIN_RUNS
+        k = sum(passed.values())
+        lo, hi = (None, None) if few else wilson(k, len(passed))
+        line = f"{arm:22}{nruns:>5}{100 * k / len(passed):>7.1f}%{_ci(lo, hi, 100)}"
+        if costs:
+            m, clo, chi = bootstrap_mean(list(costs.values()))
+            line += f"  ${m:.3f}{_ci(clo, chi, 1, '.3f')}"
+        rows = turns.get(arm, [])
+        if rows:
+            line += f"  {100 * sum(t['tier'] == 'lite' for t in rows) / len(rows):.0f}%"
+        out.append(line + ("  too few runs" if few else ""))
+    out += ["", "routed vs matched random arm (difference, 95% interval)"]
+    for routed in ("judge", "triage", "hybrid"):
+        rnd = f"random-{routed}"
+        if rnd not in stats and routed == "judge":
+            rnd = "random"  # alias of random-judge
+        if routed not in stats or rnd not in stats:
+            continue
+        (pa, ca, na), (pb, cb, nb) = stats[routed], stats[rnd]
+        keys = sorted(set(pa) & set(pb))
+        runs = sorted(set(ca) & set(cb))
+        unpaired = len(set(pa) ^ set(pb))
+        few = min(na, nb) < MIN_RUNS
+        line = f"{routed} vs {rnd}: "
+        if keys:
+            d, lo, hi = newcombe([pa[k] for k in keys], [pb[k] for k in keys])
+            line += f"pass {100 * d:+.1f} pp" + ("" if few else _ci(lo, hi, 100, "+.1f"))
+        if runs:
+            d, lo, hi = bootstrap_paired_diff([ca[r] for r in runs], [cb[r] for r in runs])
+            line += f"  cost {d:+.3f} $/task" + _ci(lo, hi, 1, "+.3f")
+        out.append(
+            line + f"  ({len(keys)} pairs, {unpaired} unpaired)" + ("  too few runs" if few else "")
+        )
+    return "\n".join(out)
+
+
 def report(_: argparse.Namespace) -> None:
     attempts = [json.loads(ln) for ln in (RESULTS / "attempts.jsonl").read_text().splitlines()]
-    by_arm: dict[str, dict[tuple[int, str], bool]] = defaultdict(dict)
-    secs: dict[str, list[float]] = defaultdict(list)
-    for r in attempts:
-        by_arm[r["arm"]][(r["run"], r["exercise"])] = r["passed"]
-        secs[r["arm"]].append(r["agent_s"])
-    print(
-        f"{'arm':9}{'pass':>11}{'requests':>10}{'lite %':>9}{'cost $':>9}"
-        f"{'$/task':>8}{'cache %':>9}{'s/task':>8}  vs frontier (95% CI)"
-    )
-    base = by_arm.get("frontier", {})
+    turns: dict[str, list[dict[str, Any]]] = {}
     for arm in ARMS:
-        if arm not in by_arm:
-            continue
-        res = by_arm[arm]
-        turns = [
-            json.loads(ln) for p in turn_logs(RESULTS, arm) for ln in p.read_text().splitlines()
-        ]
-        front = [t for t in turns if t["tier"] == "frontier"]
-        cost = sum(t.get("cost_usd") or 0 for t in front)
-        inp = sum(t.get("input_tokens") or 0 for t in front)
-        cached = sum(t.get("cached_tokens") or 0 for t in front)
-        lite = sum(t["tier"] == "lite" for t in turns)
-        line = (
-            f"{arm:9}{sum(res.values()):>5}/{len(res):<5}{len(turns):>10}"
-            f"{100 * lite / max(len(turns), 1):>8.0f}%{cost:>9.2f}{cost / len(res):>8.3f}"
-            f"{100 * cached / max(inp, 1):>8.0f}%{sum(secs[arm]) / len(secs[arm]):>8.0f}"
-        )
-        keys = sorted(set(res) & set(base))
-        if arm != "frontier" and keys:
-            d, lo, hi = newcombe([res[k] for k in keys], [base[k] for k in keys])
-            line += f"  {100 * d:+.1f} pp [{100 * lo:+.1f}, {100 * hi:+.1f}]"
-        print(line)
-    reasons: dict[str, int] = defaultdict(int)
-    for p in RESULTS.glob("turns-judge-*.jsonl"):
-        for ln in p.read_text().splitlines():
-            t = json.loads(ln)
-            reasons[f"{t['reason'].split(' (')[0]} -> {t['tier']}"] += 1
-    if reasons:
-        print("\njudge arm decisions:", dict(sorted(reasons.items(), key=lambda kv: -kv[1])))
+        for p in turn_logs(RESULTS, arm):
+            run_no = int(p.stem.rsplit("-", 1)[1])
+            rows = [{**json.loads(ln), "run": run_no} for ln in p.read_text().splitlines()]
+            turns.setdefault(arm, []).extend(rows)
+    print(build_report(attempts, turns))
 
 
 def main() -> None:

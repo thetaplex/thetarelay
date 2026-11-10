@@ -2,6 +2,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
@@ -114,3 +115,52 @@ def test_random_hybrid_ignores_ablation_logs(tmp_path: Path) -> None:
     (tmp_path / "turns-hybrid-no-stop-0.jsonl").write_text('{"tier": "lite"}\n' * 10)
     env = routing.arm_env("random-hybrid", tmp_path)
     assert env["THETARELAY_RANDOM_LITE_SHARE"] == "0.400"
+
+
+def _attempts(arm: str, runs: int, passes: list[bool]) -> list[dict[str, Any]]:
+    return [
+        {"arm": arm, "run": r, "exercise": f"ex{i}", "passed": p, "agent_s": 1.0}
+        for r in range(runs)
+        for i, p in enumerate(passes)
+    ]
+
+
+def _tlog(runs: int, lite: int, frontier: int, cost: float) -> list[dict[str, Any]]:
+    rows = []
+    for r in range(runs):
+        rows += [{"run": r, "tier": "lite", "cost_usd": 0.0}] * lite
+        rows += [{"run": r, "tier": "frontier", "cost_usd": cost + r}] * frontier
+    return rows
+
+
+def test_report_paired_difference_with_intervals() -> None:
+    passes = [True, True, False, True]
+    att = _attempts("hybrid", 10, passes) + _attempts(
+        "random-hybrid", 10, [True, False, False, True]
+    )
+    turns = {"hybrid": _tlog(10, 1, 3, 1.0), "random-hybrid": _tlog(10, 1, 3, 2.0)}
+    out = routing.build_report(att, turns)
+    assert "too few runs" not in out
+    line = next(ln for ln in out.splitlines() if ln.startswith("hybrid vs random-hybrid"))
+    assert "pass +" in line
+    assert line.count("[") == 2  # pass-rate and cost intervals
+    row = next(ln for ln in out.splitlines() if ln.startswith("hybrid "))
+    assert " 10 " in row
+    assert "25%" in row  # lite share
+
+
+def test_report_too_few_runs_has_no_interval() -> None:
+    att = _attempts("hybrid", 2, [True, False]) + _attempts("random-hybrid", 2, [True, True])
+    turns = {"hybrid": _tlog(2, 1, 1, 1.0), "random-hybrid": _tlog(2, 1, 1, 1.0)}
+    out = routing.build_report(att, turns)
+    rows = [ln for ln in out.splitlines() if ln.startswith(("hybrid", "random-hybrid"))]
+    assert rows
+    for ln in rows:
+        assert "too few runs" in ln
+        assert "[" not in ln
+
+
+def test_report_counts_unpaired_and_handles_missing_turns() -> None:
+    att = _attempts("hybrid", 3, [True, False]) + _attempts("random-hybrid", 3, [True])
+    out = routing.build_report(att, {})
+    assert "unpaired" in out
