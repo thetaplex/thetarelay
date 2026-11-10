@@ -21,7 +21,7 @@ from fastapi.responses import StreamingResponse
 from . import __version__
 from .config import RouterConfig
 from .router import Decision, conversation_key, decide, events
-from .steps import classify, signals_tool_call, tool_calls
+from .steps import SEVERITY, Group, classify, signals_tool_call, tool_calls
 
 logger = logging.getLogger("thetarelay.proxy")
 
@@ -116,6 +116,39 @@ def _outbound(
         hdrs = {k: v for k, v in hdrs.items() if k.lower() not in _CREDENTIAL_HEADERS}
         hdrs["authorization"] = f"Bearer {cfg.frontier_api_key}"
     return cfg.frontier_base_url + _PATHS[provider], out, hdrs
+
+
+def _guard(cfg: RouterConfig, body: dict[str, Any], raw: bytes) -> tuple[str | None, list[Group]]:
+    """Guard reason for a buffered lite reply (None: keep it) and the groups of its tool calls."""
+    if cfg.lite_guard == "off":
+        return None, []
+    try:
+        calls = tool_calls(raw)
+        groups = [classify(name, args) for name, args in calls]
+        if not calls and signals_tool_call(raw):
+            return "lite_malformed", ["irreversible"]
+        required: dict[str, list[str]] = {}
+        for tool in body.get("tools") or []:
+            # OpenAI nests the tool under `function`; Anthropic does not.
+            spec = tool.get("function", tool)
+            schema = spec.get("parameters" if "function" in tool else "input_schema") or {}
+            required[spec["name"]] = schema.get("required") or []
+        for name, args in calls:
+            parsed = json.loads(args) if name in required else None
+            if not isinstance(parsed, dict) or any(k not in parsed for k in required[name]):
+                return "lite_malformed", groups
+        if "irreversible" in groups:
+            return "lite_irreversible", groups
+        if cfg.lite_guard == "writes" and "write" in groups:
+            return "lite_wrote", groups
+        return None, groups
+    except Exception:  # an odd reply or request: fail closed
+        return "lite_malformed", ["irreversible"]
+
+
+def guard_reason(cfg: RouterConfig, body: dict[str, Any], raw: bytes) -> str | None:
+    """`lite_malformed`, `lite_irreversible` or `lite_wrote` to discard a lite reply, else None."""
+    return _guard(cfg, body, raw)[0]
 
 
 def _usage(provider: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -498,23 +531,34 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             if can_fall_back and upstream.status_code >= 500:
                 escalation = "lite_failed"
                 await upstream.aclose()
-            elif can_fall_back and cfg.escalate_on_stop and upstream.status_code == 200:
-                # Buffer the lite reply; replay it only if it continues the agent loop.
+            elif (
+                can_fall_back
+                and (cfg.escalate_on_stop or cfg.lite_guard != "off")
+                and upstream.status_code == 200
+            ):
+                # Buffer the lite reply; replay it only if its tool calls pass the guard and it
+                # continues the agent loop.
                 raw = await upstream.aread()
                 await upstream.aclose()
-                if signals_tool_call(raw):
+                reason, groups = _guard(cfg, body, raw)
+                if reason:
+                    escalation = reason
+                    record["guarded_step_groups"] = sorted(set(groups), key=SEVERITY.__getitem__)
+                    record["lite_output_chars"] = len(raw)
+                elif cfg.escalate_on_stop and not signals_tool_call(raw):
+                    escalation = "lite_stopped"
+                    record["lite_output_chars"] = len(raw)
+                else:
                     upstream = httpx.Response(
                         200, headers=upstream.headers, stream=httpx.ByteStream(raw)
                     )
-                else:
-                    escalation = "lite_stopped"
-                    record["lite_output_chars"] = len(raw)
         except httpx.TransportError as exc:
             if not can_fall_back:
                 return _bad_gateway(exc)
             escalation = "lite_failed"
         if escalation:
-            # The lite server is down, or its reply would end the agent's turn.
+            # The lite server is down, its reply would end the agent's turn, or the guard
+            # discarded it. The frontier request is built from the client's body.
             decision.tier = "frontier"
             record["reason"] = decision.reason = f"{decision.reason}; {escalation}"
             url, out_body, hdrs = _outbound(cfg, body, in_headers, "frontier", provider)

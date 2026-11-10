@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from thetarelay.config import RouterConfig
-from thetarelay.proxy import StreamUsage, create_app
+from thetarelay.proxy import StreamUsage, create_app, guard_reason
 from thetarelay.router import (
     events,
     requests_since_failure,
@@ -1288,3 +1288,201 @@ def test_lite_guard_default_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_lite_guard_invalid_value_names_levels() -> None:
     with pytest.raises(ValueError, match="off, irreversible or writes"):
         RouterConfig(lite_guard="strict")
+
+
+# Lite action guard (openspec lite-action-guard).
+GUARD_TOOLS = {"read": ["path"], "bash": ["command"], "edit": ["path"], "write": ["path"]}
+FRONTIER = b"data: frontier\n\n"
+
+
+def _guard_request(provider: str, stream: bool, tools: dict[str, list[str]] | None = None) -> Any:
+    tools = GUARD_TOOLS if tools is None else tools
+    if provider == "anthropic":
+        specs: list[Any] = [
+            {"name": n, "input_schema": {"type": "object", "required": r}} for n, r in tools.items()
+        ]
+    else:
+        specs = [
+            {"type": "function", "function": {"name": n, "parameters": {"required": r}}}
+            for n, r in tools.items()
+        ]
+    msgs = [{"role": "user", "content": "go"}]
+    return {
+        "model": "claude-x",
+        "max_tokens": 10,
+        "stream": stream,
+        "messages": msgs,
+        "tools": specs,
+    }
+
+
+def _lite_reply(provider: str, stream: bool, *calls: tuple[str, str]) -> bytes:
+    """A lite reply calling each (tool name, JSON arguments), in the provider's format."""
+    if provider == "anthropic" and not stream:
+        blocks = [
+            {"type": "tool_use", "id": f"t{i}", "name": n, "input": json.loads(a)}
+            for i, (n, a) in enumerate(calls)
+        ]
+        return json.dumps({"content": blocks, "stop_reason": "tool_use"}).encode()
+    if provider == "anthropic":
+        events: list[dict[str, Any]] = []
+        for i, (n, a) in enumerate(calls):
+            block = {"type": "tool_use", "id": f"t{i}", "name": n, "input": {}}
+            delta = {"type": "input_json_delta", "partial_json": a}
+            events += [
+                {"type": "content_block_start", "index": i, "content_block": block},
+                {"type": "content_block_delta", "index": i, "delta": delta},
+            ]
+        return _sse(*events, {"type": "message_delta", "delta": {"stop_reason": "tool_use"}})
+    tcs = [
+        {"index": i, "id": f"c{i}", "type": "function", "function": {"name": n, "arguments": a}}
+        for i, (n, a) in enumerate(calls)
+    ]
+    if not stream:
+        msg = {"role": "assistant", "tool_calls": tcs}
+        return json.dumps({"choices": [{"message": msg, "finish_reason": "tool_calls"}]}).encode()
+    return _sse({"choices": [{"delta": {"tool_calls": tcs}, "finish_reason": "tool_calls"}]})
+
+
+def _guard_app(
+    tmp_path: Path, lite: bytes, **overrides: Any
+) -> tuple[Any, list[tuple[str, dict[str, Any], dict[str, str]]]]:
+    # A non-Anthropic frontier model: the frontier body then differs from the client's only
+    # in `model`, in both formats.
+    app, calls = _app(tmp_path, 0.9, frontier_model="openai/gpt-6.1-terra", **overrides)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        calls.append((url, json.loads(request.content), dict(request.headers)))
+        if "judge.test" in url:
+            return httpx.Response(
+                200, json={"answers": {"route": {"probabilities": {"easy": 0.9}}}}
+            )
+        content = lite if "local.test" in url else FRONTIER
+        return httpx.Response(200, content=content, headers={"content-type": "text/event-stream"})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return app, calls
+
+
+async def _post_as(provider: str, app: Any, body: dict[str, Any]) -> httpx.Response:
+    return await (_post if provider == "anthropic" else _post_openai)(app, body)
+
+
+PUSH = ("bash", '{"command": "git push origin main"}')
+EDIT = ("edit", '{"path": "a.py", "old": "a", "new": "b"}')
+GUARD_CASES = [
+    # level, lite tool calls, reason suffix (None: the agent gets the lite reply), step groups
+    ("irreversible", [PUSH], "lite_irreversible", ["irreversible"]),
+    ("writes", [PUSH], "lite_irreversible", ["irreversible"]),
+    ("irreversible", [("bash", '"git push"')], "lite_malformed", ["irreversible"]),
+    ("irreversible", [("run_tests", "{}")], "lite_malformed", ["irreversible"]),
+    ("irreversible", [("edit", '{"old": "a", "new": "b"}')], "lite_malformed", ["write"]),
+    ("irreversible", [PUSH, ("run_tests", "{}")], "lite_malformed", ["irreversible"]),
+    ("writes", [EDIT, PUSH], "lite_irreversible", ["write", "irreversible"]),
+    ("writes", [EDIT], "lite_wrote", ["write"]),
+    ("irreversible", [EDIT], None, None),
+    ("writes", [("bash", '{"command": "uv run pytest -q"}')], None, None),
+    ("writes", [("read", '{"path": "a.py"}'), ("bash", '{"command": "rg foo"}')], None, None),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(("level", "calls", "reason", "groups"), GUARD_CASES)
+async def test_guard_discards_risky_or_malformed_lite_replies(
+    tmp_path: Path,
+    provider: str,
+    stream: bool,
+    level: str,
+    calls: list[tuple[str, str]],
+    reason: str | None,
+    groups: list[str] | None,
+) -> None:
+    lite = _lite_reply(provider, stream, *calls)
+    app, sent = _guard_app(tmp_path, lite, lite_guard=level)
+    body = _guard_request(provider, stream)
+    resp = await _post_as(provider, app, body)
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    if reason is None:
+        assert (resp.headers["x-thetarelay-tier"], resp.content) == ("lite", lite)
+        assert not any("frontier.test" in url for url, _, _ in sent)
+        assert "guarded_step_groups" not in line
+        return
+    assert resp.headers["x-thetarelay-tier"] == "frontier"
+    assert resp.headers["x-thetarelay-reason"] == f"judge; {reason}"
+    assert resp.content == FRONTIER  # no part of the lite reply reaches the agent
+    frontier_body = sent[-1][1]
+    assert "frontier.test" in sent[-1][0]
+    assert {**frontier_body, "model": body["model"]} == body  # nothing of the lite reply
+    assert line["reason"] == f"judge; {reason}"
+    assert line["guarded_step_groups"] == groups
+    assert line["lite_output_chars"] == len(lite)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+async def test_guard_malformed_replies_the_classifier_cannot_see(
+    tmp_path: Path, provider: str
+) -> None:
+    # A tool call is signalled but none can be read.
+    signal_only = (
+        b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+        if provider == "openai"
+        else _sse({"type": "message_delta", "delta": {"stop_reason": "tool_use"}})
+    )
+    # A request without tools makes every call malformed.
+    for lite, body in [
+        (signal_only, _guard_request(provider, True)),
+        (
+            _lite_reply(provider, True, ("read", '{"path": "a"}')),
+            _guard_request(provider, True, {}),
+        ),
+        (_lite_reply(provider, True, ("bash", '{"command": ')), _guard_request(provider, True)),
+    ]:
+        app, _ = _guard_app(tmp_path, lite, lite_guard="irreversible")
+        resp = await _post_as(provider, app, body)
+        assert resp.headers["x-thetarelay-reason"] == "judge; lite_malformed"
+        assert resp.content == FRONTIER
+
+
+def test_guard_fails_closed_on_odd_requests() -> None:
+    raw = _lite_reply("anthropic", False, ("read", '{"path": "a"}'))
+    cfg = RouterConfig(lite_guard="irreversible")
+    assert guard_reason(cfg, {"tools": ["read"]}, raw) == "lite_malformed"
+    assert guard_reason(cfg, _guard_request("anthropic", False), raw) is None
+    assert guard_reason(RouterConfig(), {"tools": ["read"]}, raw) is None  # level off
+
+
+@pytest.mark.asyncio
+async def test_guard_does_not_run_in_forced_lite_mode(tmp_path: Path) -> None:
+    lite = _lite_reply("anthropic", True, EDIT)
+    app, sent = _guard_app(tmp_path, lite, lite_guard="writes", route_mode="lite")
+    resp = await _post(app, _guard_request("anthropic", True))
+    assert (resp.headers["x-thetarelay-tier"], resp.content) == ("lite", lite)
+    assert not any("frontier.test" in url for url, _, _ in sent)
+
+
+@pytest.mark.asyncio
+async def test_guard_and_escalate_on_stop_together(tmp_path: Path) -> None:
+    text = b'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\n'
+    body = _guard_request("openai", True)
+    # The guard alone never discards a reply without a tool call.
+    app, _ = _guard_app(tmp_path, text, lite_guard="writes")
+    resp = await _post_openai(app, body)
+    assert (resp.headers["x-thetarelay-tier"], resp.content) == ("lite", text)
+    # With both on, a reply without a tool call is still `lite_stopped`.
+    app, _ = _guard_app(tmp_path, text, lite_guard="writes", escalate_on_stop=True)
+    resp = await _post_openai(app, body)
+    assert resp.headers["x-thetarelay-reason"] == "judge; lite_stopped"
+    # The guard runs first.
+    edit = _lite_reply("openai", True, EDIT)
+    app, _ = _guard_app(tmp_path, edit, lite_guard="writes", escalate_on_stop=True)
+    resp = await _post_openai(app, body)
+    assert resp.headers["x-thetarelay-reason"] == "judge; lite_wrote"
+    # A safe tool call passes both checks.
+    run = _lite_reply("openai", True, ("bash", '{"command": "pytest"}'))
+    app, _ = _guard_app(tmp_path, run, lite_guard="writes", escalate_on_stop=True)
+    resp = await _post_openai(app, body)
+    assert (resp.headers["x-thetarelay-tier"], resp.content) == ("lite", run)
