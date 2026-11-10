@@ -17,7 +17,7 @@ from typing import Any, Literal
 import httpx
 
 from .config import RouterConfig
-from .steps import Group, _tokenize, _Unparsable, classify
+from .steps import _SEPARATORS, Group, _tokenize, _Unparsable, classify
 
 Tier = Literal["lite", "frontier"]
 
@@ -100,7 +100,7 @@ def _text(content: Any) -> str:
 
 def _link(calls: dict[str, tuple[str, Any]], call_id: Any) -> tuple[Group, str | None]:
     """Step group and shell command of the call a result answers; unknown id is irreversible."""
-    if call_id not in calls:
+    if not isinstance(call_id, str) or call_id not in calls:
         return "irreversible", None
     name, args = calls[call_id]
     if isinstance(args, str):
@@ -119,9 +119,14 @@ def _last_program(command: str | None) -> str | None:
     except _Unparsable:
         return None
     words: list[str] = []
+    redirect = False
     for kind, text in tokens:
         if kind == "op":
-            words = []
+            if text in _SEPARATORS:  # newlines are already `;`
+                words = []
+            redirect = text not in _SEPARATORS
+        elif redirect:  # the redirect's target, not a program
+            redirect = False
         else:
             words.append(text)
     while words and ("=" in words[0] or words[0] == "rtk" or words[:2] == ["rtk", "proxy"]):
@@ -169,7 +174,8 @@ def events(body: dict[str, Any], provider: str) -> list[Event]:
                 out.append(Event("assistant" if role == "assistant" else "user", text))
             for tc in msg.get("tool_calls") or []:
                 fn = tc.get("function") or {}
-                calls[tc.get("id")] = (fn.get("name", ""), fn.get("arguments", ""))
+                if isinstance(tc.get("id"), str):
+                    calls[tc["id"]] = (fn.get("name", ""), fn.get("arguments", ""))
                 out.append(Event("call", f"{fn.get('name', '')} {fn.get('arguments', '')}"))
             continue
         if isinstance(content, str):
@@ -181,7 +187,8 @@ def events(body: dict[str, Any], provider: str) -> list[Event]:
                 out.append(Event("assistant" if role == "assistant" else "user", block["text"]))
             elif kind == "tool_use":
                 args = json.dumps(block.get("input", {}), ensure_ascii=False)
-                calls[block.get("id")] = (block.get("name", ""), args)
+                if isinstance(block.get("id"), str):
+                    calls[block["id"]] = (block.get("name", ""), args)
                 out.append(Event("call", f"{block.get('name', '')} {args}"))
             elif kind == "tool_result":
                 text = _text(block.get("content", ""))

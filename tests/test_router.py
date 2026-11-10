@@ -819,7 +819,15 @@ def test_read_only_shell_command_output_is_not_a_failure() -> None:
 
 
 @pytest.mark.parametrize(
-    "command", ["rg foo", "grep -r foo src", "cat a | egrep foo", "fgrep x f", "rtk rg foo"]
+    "command",
+    [
+        "rg foo",
+        "grep -r foo src",
+        "cat a | egrep foo",
+        "fgrep x f",
+        "rtk rg foo",
+        "rg foo 2>/dev/null",
+    ],
 )
 def test_search_with_no_match_is_not_a_failure(command: str) -> None:
     assert not _sh(command, "Command exited with code 1").failed
@@ -842,3 +850,10 @@ def test_unlinked_search_exit_one_is_a_failure() -> None:
     body["messages"][1]["content"][0]["content"] = "Command exited with code 1"
     (res,) = [e for e in events(body, "anthropic") if e.kind == "result"]
     assert res.failed
+
+
+@pytest.mark.parametrize(("build", "provider"), [(_anth, "anthropic"), (_oai, "openai")])
+def test_non_string_ids_are_unlinked(build: Any, provider: str) -> None:
+    body = build([(["a"], "bash", {"command": "ls"})], [{"id": "a"}])
+    (res,) = [e for e in events(body, provider) if e.kind == "result"]
+    assert (res.group, res.command) == ("irreversible", None)
