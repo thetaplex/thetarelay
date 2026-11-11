@@ -170,18 +170,19 @@ def test_report_counts_unpaired_and_handles_missing_turns() -> None:
     assert "unpaired" in out
 
 
-def test_report_cost_includes_handed_back_triage_calls() -> None:
+def test_report_cost_includes_triage_and_discarded_lite_calls() -> None:
     att = _attempts("hybrid", 1, [True, True])
     rows = [
         {"run": 0, "tier": "frontier", "cost_usd": 0.5},
-        {"run": 0, "tier": "lite", "cost_usd": 0.1, "triage_cost_usd": 0.4},
+        {"run": 0, "tier": "lite", "cost_usd": 0.1, "triage_cost_usd": 0.3},
+        {"run": 0, "tier": "frontier", "cost_usd": 0.0, "discarded_lite_cost_usd": 0.1},
     ]
     row = next(
         ln
         for ln in routing.build_report(att, {"hybrid": rows}).splitlines()
         if ln.startswith("hybrid ")
     )
-    assert "$0.500" in row  # (0.5 + 0.1 + 0.4) / 2 tasks
+    assert "$0.500" in row  # (0.5 + 0.1 + 0.3 + 0.1) / 2 tasks
 
 
 def _load_app() -> ModuleType:
@@ -374,3 +375,12 @@ def test_unknown_arm_fails_before_any_build(
     with pytest.raises(SystemExit, match="pi-hybird"):
         app.run(argparse.Namespace(runs=1, arms="claude,pi-hybird", specs=""))
     assert built == []
+
+
+def test_app_build_cost_includes_discarded_lite_replies() -> None:
+    rows = [
+        {"tier": "frontier", "cost_usd": 0.5, "discarded_lite_cost_usd": 0.02},
+        {"tier": "lite", "cost_usd": 0.1, "triage_cost_usd": 0.3},
+    ]
+    rec = app.turn_costs(rows)
+    assert (rec["requests"], rec["discarded_lite_cost_usd"], rec["api_cost_usd"]) == (2, 0.02, 0.92)

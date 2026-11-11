@@ -234,7 +234,12 @@ def run_pi(work: Path, out: Path, env: dict[str, str], turn_log: Path) -> dict[s
         shutil.rmtree(agent.parent.parent, ignore_errors=True)
     secs = time.perf_counter() - started
     rows = [json.loads(ln) for ln in turn_log.read_text().splitlines()] if turn_log.exists() else []
-    rec: dict[str, Any] = {"status": status, "seconds": round(secs, 1), "requests": len(rows)}
+    return {"status": status, "seconds": round(secs, 1), **turn_costs(rows)}
+
+
+def turn_costs(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Per-tier tokens and cost of one build's turn log, and its total API cost."""
+    rec: dict[str, Any] = {"requests": len(rows)}
     for tier in ("frontier", "lite"):
         t = [r for r in rows if r["tier"] == tier]
         inp = sum(r.get("input_tokens") or 0 for r in t)
@@ -248,8 +253,16 @@ def run_pi(work: Path, out: Path, env: dict[str, str], turn_log: Path) -> dict[s
         }
     # Triage mode: the frontier call that answered <EASY/> before a lite request.
     rec["triage_cost_usd"] = round(sum(r.get("triage_cost_usd") or 0 for r in rows), 4)
+    # Lite replies discarded by the lite guard or `lite_stopped` were paid for too.
+    rec["discarded_lite_cost_usd"] = round(
+        sum(r.get("discarded_lite_cost_usd") or 0 for r in rows), 4
+    )
     rec["api_cost_usd"] = round(
-        rec["frontier"]["cost_usd"] + rec["lite"]["cost_usd"] + rec["triage_cost_usd"], 4
+        rec["frontier"]["cost_usd"]
+        + rec["lite"]["cost_usd"]
+        + rec["triage_cost_usd"]
+        + rec["discarded_lite_cost_usd"],
+        4,
     )
     return rec
 

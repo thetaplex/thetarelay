@@ -46,6 +46,7 @@ The lite tier takes the easy requests. It can be a local server (Ollama) or a ho
 | `THETARELAY_EASY_THRESHOLD` | `0.7` | A request goes to the lite tier only if the judge gives P(easy) above this value. Must be between 0 and 1. For `tev1:0.8b`, use approximately `0.5`. |
 | `THETARELAY_STAY_REQUESTS` | `0` | After a failed tool result, this number of agent requests go to the frontier tier without the judge. |
 | `THETARELAY_ROUTE_MODE` | `hybrid` | `hybrid`: the judge first; a request it does not send to the lite tier goes to the frontier tier with the note (see `triage`). `judge`: the judge decides alone. `triage`: no judge; the frontier model gets each request with a short note at the end and either does the step or answers `<EASY/>`, and then the request goes to the lite tier. Oversized requests and requests after a failure go to the frontier tier without the note. `random`, `lite`, `frontier`: evaluation baselines. |
+| `THETARELAY_LITE_GUARD` | `off` | `irreversible`: a lite reply with an irreversible step or a malformed tool call is discarded and the frontier tier is asked instead. `writes`: also discards file-editing steps. `off`: lite replies are not checked. While the guard is on, calls to tools that have no function name (such as OpenAI `custom` tools) count as malformed. |
 
 ## Logs
 

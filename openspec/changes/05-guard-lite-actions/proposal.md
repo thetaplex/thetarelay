@@ -35,13 +35,11 @@ None.
 - Docs: configuration, HTTP API reason values, how routing works.
 - Depends on `01-add-step-classification`.
 
-## Open for review
+## Decided
 
-- **Edit size rule (from the review): left out.** The review proposed escalating edits above N
-  changed lines or touching several files. Size does not track risk: subtle bugs are usually one
-  line, and long new files are often boilerplate. Proposal: choose an edit policy only after the
-  research protocol (phase 0 and 1) measures lite edit accuracy.
+- **Edit size rule: left out.** Size does not track risk: subtle bugs are usually one line, and
+  long new files are often boilerplate. Choose an edit policy after the research protocol
+  measures lite edit accuracy.
 - Default stays `off` until an evaluation run shows the guard does not cost more than it saves.
-- With four step groups (change 01), `irreversible` now also covers unknown tools and commands.
-  Should level `writes` also discard `run` steps? Proposal: no; tests are the lite tier's main
-  feedback and stay in the working tree. Decide in this change's review.
+- Level `writes` does not discard `run` steps: tests are the lite tier's main feedback and stay
+  in the working tree. See `design.md`.
