@@ -52,12 +52,16 @@ The prices apply only if you give both `--price-input` and `--price-output`. The
 OpenRouter lookup.
 
 The text report has one row for each tier (requests, tokens and cost), the actual cost, the
-frontier-only estimate, the saving, and the count of each routing reason. A value shows `n/a`
+frontier-only estimate, the saving, and the count of each routing reason. Each part of a reason
+counts on its own: `judge; lite_stopped` adds one to `judge` and one to `lite_stopped`. The cost
+of a line includes a triage call that handed the step back and a lite reply the proxy
+discarded (lite guard or `lite_stopped`); the estimate leaves the discarded reply out. If the log
+has shadow requests, a separate line shows their number and cost; that cost is not in the totals. A value shows `n/a`
 when it is not known, for example the estimate if the price lookup fails or if you use
 `--offline` without prices. Lines that are not valid JSON are skipped and counted.
 
 `--json` prints the same data: `tiers`, `actual_usd`, `estimate_usd`, `saving_pct`,
-`no_cost_requests`, `reasons`, `skipped_lines`, `frontier_model`, `prices_usd_per_million`,
+`no_cost_requests`, `shadow_requests`, `shadow_usd`, `reasons`, `skipped_lines`, `frontier_model`, `prices_usd_per_million`,
 `prices_source` and `price_error`.
 
 ```sh

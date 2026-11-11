@@ -96,6 +96,7 @@ def test_fallbacks_by_reason(tmp_path: Path) -> None:
     r = build(write(tmp_path, rows))
     assert r["reasons"]["lite_stopped"] == 5
     assert r["reasons"]["lite_failed"] == 1
+    assert r["reasons"]["judge"] == 6
     assert "lite_stopped: 5" in report.format_text(r)
 
 
@@ -210,3 +211,38 @@ def test_text_assumption_line_and_singular_counts(tmp_path: Path) -> None:
     assert "unknown" in text
     assert "None" not in text
     assert "{" not in text
+
+
+def test_discarded_lite_cost_in_actual_not_in_estimate(tmp_path: Path) -> None:
+    row = line("frontier", "judge; lite_stopped", cost=1.0, discarded_lite_cost_usd=0.1)
+    r = build(write(tmp_path, [row]))
+    assert r["actual_usd"] == pytest.approx(1.1)
+    assert r["tiers"]["frontier"]["cost_usd"] == pytest.approx(1.1)
+    assert r["estimate_usd"] == pytest.approx(1.0)
+
+
+def test_shadow_cost_shown_apart_from_totals(tmp_path: Path) -> None:
+    rows = [
+        line("frontier", cost=1.0, shadow={"match": True, "cost_usd": 0.03}),
+        line("frontier", cost=1.0, shadow={"error": "parse", "cost_usd": 0.01}),
+        line("frontier", cost=1.0, shadow={"error": "timeout"}),
+        line("frontier", cost=1.0),
+    ]
+    r = build(write(tmp_path, rows))
+    assert (r["shadow_requests"], r["shadow_usd"]) == (3, pytest.approx(0.04))
+    assert r["actual_usd"] == pytest.approx(4.0)
+    text = report.format_text(r)
+    assert "shadow requests: 3, $0.0400 (labelling; not in the totals above)" in text
+
+
+def test_no_shadow_line_without_shadows(tmp_path: Path) -> None:
+    r = build(write(tmp_path, [line("frontier", cost=1.0)]))
+    assert r["shadow_requests"] == 0
+    assert "shadow" not in report.format_text(r)
+
+
+def test_openai_input_includes_cache(tmp_path: Path) -> None:
+    rows = [line(inp=1000, cached=800, provider="openai")]
+    prices = {"input": 5.0, "output": 25.0, "cache_read": 0.5}
+    r = build(write(tmp_path, rows), prices=prices)
+    assert r["estimate_usd"] == pytest.approx((200 * 5 + 800 * 0.5) / 1e6)

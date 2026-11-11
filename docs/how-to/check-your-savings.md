@@ -31,13 +31,15 @@ Use the turn log to see what routing cost and what the frontier model alone woul
    Estimate: lite requests priced at anthropic/claude-opus-5.5 prices with the same token counts (input $5.00/M, output $25.00/M, cache read $0.50/M, cache write $6.25/M; source: OpenRouter)
    saving: 73.1% (estimate)
    reasons:
-     judge: easy: 2
-     judge: hard: 1
+     judge: 3
+     triage: 1
    ```
 
    - `actual cost` is the cost that the provider reported, summed over all requests.
    - `frontier-only cost (estimate)` is the cost if the frontier model did every request.
    - `saving` is the difference between the two, as a percentage.
+   - With shadow routing on, a `shadow requests` line shows what the shadows cost. That money
+     labels steps; it is not in the actual cost or the saving.
 
 ## The estimate is a guide
 

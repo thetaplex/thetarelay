@@ -64,13 +64,17 @@ def _line_estimate(row: dict[str, Any], p: dict[str, float]) -> float:
     return (
         uncached * inp
         + cached * p.get("cache_read", inp)
-        + _tokens(row, "cache_write_tokens") * p.get("cache_write", inp)
+        + write * p.get("cache_write", inp)
         + _tokens(row, "output_tokens") * p["output"]
     ) / 1e6
 
 
-def _cost(row: dict[str, Any]) -> float | None:
+def _cost(row: dict[str, Any], discarded: bool = True) -> float | None:
+    """What a line cost: its reply, a handed-back triage call and, unless `discarded` is
+    False, a lite reply the proxy discarded (frontier-only routing never makes that call)."""
     parts = [row.get("cost_usd"), row.get("triage_cost_usd")]
+    if discarded:
+        parts.append(row.get("discarded_lite_cost_usd"))
     nums = [x for x in parts if isinstance(x, int | float)]
     return sum(nums) if nums else None
 
@@ -102,6 +106,9 @@ def build(
             t["cost_usd"] = (t["cost_usd"] or 0) + c
         reasons.update((str(row.get("reason") or "unknown")).split("; "))
     actual = sum(t["cost_usd"] or 0 for t in tiers.values())
+    # Shadow requests label steps; they are not routing cost, so they stay out of the totals.
+    shadows = [r["shadow"] for r in rows if isinstance(r.get("shadow"), dict)]
+    shadow_usd = sum(c for x in shadows if isinstance(c := x.get("cost_usd"), int | float))
 
     models = Counter(r.get("model") for r in rows if r.get("tier") == "frontier")
     model = frontier_model or (models.most_common(1)[0][0] if models else None)
@@ -123,7 +130,9 @@ def build(
     estimate = None
     if prices is not None:
         estimate = sum(
-            (_cost(r) or 0) if r.get("tier") == "frontier" else _line_estimate(r, prices)
+            (_cost(r, discarded=False) or 0)
+            if r.get("tier") == "frontier"
+            else _line_estimate(r, prices)
             for r in rows
         )
     saving = 1 - actual / estimate if estimate else None
@@ -133,6 +142,8 @@ def build(
         "estimate_usd": estimate,
         "saving_pct": None if saving is None else saving * 100,
         "no_cost_requests": no_cost,
+        "shadow_requests": len(shadows),
+        "shadow_usd": shadow_usd,
         "reasons": dict(reasons),
         "skipped_lines": skipped,
         "frontier_model": model,
@@ -172,6 +183,11 @@ def format_text(r: dict[str, Any]) -> str:
     out.append(
         "saving: n/a" if r["saving_pct"] is None else f"saving: {r['saving_pct']:.1f}% (estimate)"
     )
+    if r["shadow_requests"]:
+        out.append(
+            f"shadow requests: {r['shadow_requests']}, {_usd(r['shadow_usd'])}"
+            " (labelling; not in the totals above)"
+        )
     if r["no_cost_requests"]:
         n = r["no_cost_requests"]
         out.append(f"{n} request{'s' * (n != 1)} had no reported cost (counted as 0)")
