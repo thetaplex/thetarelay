@@ -37,10 +37,11 @@ At level `irreversible` or `writes`, the system SHALL discard a lite reply conta
 
 ### Requirement: Malformed tool calls go to the frontier
 
-At level `irreversible` or `writes`, the system SHALL discard a lite reply whose tool call names
-a tool not in the request's `tools`, has arguments that are not valid JSON, or lacks an argument
-the tool schema lists as required, and send the request to the frontier tier with reason suffix
-`lite_malformed`.
+At level `irreversible` or `writes`, the system SHALL discard a lite reply whose tool call cannot
+be read, names a tool not in the request's `tools`, has arguments that are not a JSON object, or
+lacks an argument the tool schema lists as required, and send the request to the frontier tier
+with reason suffix `lite_malformed`. A request without `tools` makes every call malformed. Tool
+entries without a name SHALL be skipped.
 
 #### Scenario: Arguments not an object
 
@@ -56,6 +57,19 @@ the tool schema lists as required, and send the request to the frontier tier wit
 
 - **WHEN** the `edit` tool requires `path` and the lite reply calls `edit` without `path`
 - **THEN** the agent receives the frontier reply with reason suffix `; lite_malformed`
+
+#### Scenario: Unreadable tool call
+
+- **WHEN** a lite reply signals a tool call that cannot be read
+- **THEN** the agent receives the frontier reply with reason suffix `; lite_malformed`, and the
+  turn log has `"guarded_step_groups": ["irreversible"]`
+
+#### Scenario: Tool without a name
+
+- **WHEN** the request's `tools` has an entry without a name and the lite reply calls `read`,
+  which the request offers
+- **THEN** the guard checks the `read` call as usual and does not discard the reply for the
+  nameless entry
 
 ### Requirement: Writes go to the frontier at level writes
 
@@ -77,10 +91,19 @@ send the request to the frontier tier with reason suffix `lite_wrote`.
 - **WHEN** the guard level is `writes` and the lite reply calls `read` and `bash` with `rg foo`
 - **THEN** the agent receives the lite reply unchanged
 
-### Requirement: Guarded replies are logged
+### Requirement: One reason per discard
 
-The system SHALL record in the turn log the step group of a discarded lite reply and the length
-of its output, and SHALL NOT send any part of the discarded reply to the frontier tier.
+When several checks apply to one lite reply, the system SHALL use the first in this order:
+`lite_malformed`, `lite_irreversible`, `lite_wrote`, `lite_stopped`. Forced lite mode
+(`THETARELAY_ROUTE_MODE=lite`) SHALL NOT be guarded, and a guarded streamed reply SHALL reach
+the agent only after the check.
+
+#### Scenario: Malformed and irreversible
+
+- **WHEN** a lite reply calls `bash` with `git push` and also calls `run_tests`, which the request
+  does not offer
+- **THEN** the reason suffix is `; lite_malformed`, and the turn log has
+  `"guarded_step_groups": ["irreversible"]`
 
 #### Scenario: Forced lite mode
 
@@ -94,10 +117,29 @@ of its output, and SHALL NOT send any part of the discarded reply to the frontie
   and `THETARELAY_ESCALATE_ON_STOP=false`
 - **THEN** the agent receives the frontier reply, and no part of the lite stream reaches it
 
+### Requirement: Guarded replies are logged
+
+The system SHALL record in the turn log, for every discarded lite reply (by the guard or by
+`lite_stopped`), its size in bytes as `lite_output_chars` and its reported cost as
+`discarded_lite_cost_usd`, and for a guard discard its step groups as `guarded_step_groups`. It
+SHALL NOT send any part of the discarded reply to the frontier tier. The evaluation reports
+SHALL count `discarded_lite_cost_usd` in cost per task.
+
 #### Scenario: Turn log of a discard
 
-- **WHEN** the guard discards a lite reply that calls `edit`
-- **THEN** the turn log line has `"guarded_step_groups": ["write"]` and `lite_output_chars`
+- **WHEN** the guard discards a lite reply that calls `edit` and reports a cost of 0.012 USD
+- **THEN** the turn log line has `"guarded_step_groups": ["write"]`, `lite_output_chars`, and
+  `"discarded_lite_cost_usd": 0.012`
+
+#### Scenario: Stopped lite reply
+
+- **WHEN** `lite_stopped` discards a lite reply that reports a cost of 0.012 USD
+- **THEN** the turn log line has `"discarded_lite_cost_usd": 0.012`
+
+#### Scenario: Kept lite reply
+
+- **WHEN** the agent receives the lite reply
+- **THEN** the turn log line has no `discarded_lite_cost_usd` field
 
 #### Scenario: Frontier request after a discard
 

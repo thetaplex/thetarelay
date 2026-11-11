@@ -29,6 +29,11 @@ their groups.
   `lite_stopped`.
 - **Default `off`** until an evaluation run (change 04) shows the guard pays for itself.
 
+- **Discarded lite cost.** A discarded lite reply was still paid for. Its usage is read from the
+  buffer (`StreamUsage` for a stream) and logged as `discarded_lite_cost_usd`, for the guard and
+  `lite_stopped` alike, and both evaluation reports add it to cost per task. Without it the
+  evaluation that decides the default would leave out part of what the guard costs.
+
 ## Risks / Trade-offs
 
 - [Agents that rename tools between requests] → Compared against the current request's

@@ -147,11 +147,6 @@ def _guard(cfg: RouterConfig, body: dict[str, Any], raw: bytes) -> tuple[str | N
         return "lite_malformed", ["irreversible"]
 
 
-def guard_reason(cfg: RouterConfig, body: dict[str, Any], raw: bytes) -> str | None:
-    """`lite_malformed`, `lite_irreversible` or `lite_wrote` to discard a lite reply, else None."""
-    return _guard(cfg, body, raw)[0]
-
-
 def _usage(provider: str, data: dict[str, Any]) -> dict[str, Any]:
     u = data.get("usage")
     u = u if isinstance(u, dict) else {}
@@ -192,6 +187,17 @@ def _cut_step_groups(seen: bytes) -> list[str]:
     groups = _step_groups(200, seen)
     started = b'"tool_use"' in seen or b'"tool_calls"' in seen
     return groups or (["irreversible"] if started else [])
+
+
+def _reply_usage(provider: str, raw: bytes) -> dict[str, Any]:
+    """Usage of a whole buffered reply, streamed (SSE) or not."""
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        stream = StreamUsage()
+        stream.feed(raw + b"\n")
+        data = {"usage": stream.usage}
+    return _usage(provider, data if isinstance(data, dict) else {})
 
 
 def _text_verdict(text: str) -> bool | None:
@@ -545,10 +551,11 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                 if reason:
                     escalation = reason
                     record["guarded_step_groups"] = sorted(set(groups), key=SEVERITY.__getitem__)
-                    record["lite_output_chars"] = len(raw)
                 elif cfg.escalate_on_stop and not signals_tool_call(raw):
                     escalation = "lite_stopped"
+                if escalation:
                     record["lite_output_chars"] = len(raw)
+                    record["discarded_lite_cost_usd"] = _reply_usage(provider, raw)["cost_usd"]
                 else:
                     upstream = httpx.Response(
                         200, headers=upstream.headers, stream=httpx.ByteStream(raw)

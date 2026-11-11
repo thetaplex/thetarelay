@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from thetarelay.config import RouterConfig
-from thetarelay.proxy import StreamUsage, create_app, guard_reason
+from thetarelay.proxy import StreamUsage, _guard, create_app
 from thetarelay.router import (
     events,
     requests_since_failure,
@@ -1387,6 +1387,70 @@ GUARD_CASES = [
 ]
 
 
+def _with_cost(provider: str, stream: bool, reply: bytes, cost: float) -> bytes:
+    """The reply with a usage report carrying OpenRouter's `cost`, where the provider puts it."""
+    usage = {"cost": cost}
+    if stream:
+        event = (
+            {"type": "message_delta", "usage": usage}
+            if provider == "anthropic"
+            else {
+                "choices": [],
+                "usage": usage,
+            }
+        )
+        return reply + _sse(event)
+    return json.dumps({**json.loads(reply), "usage": usage}).encode()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    ("overrides", "calls", "reason"),
+    [
+        ({"lite_guard": "irreversible"}, [PUSH], "lite_irreversible"),
+        ({"escalate_on_stop": True}, [], "lite_stopped"),
+    ],
+)
+async def test_discarded_lite_reply_cost_is_logged(
+    tmp_path: Path,
+    provider: str,
+    stream: bool,
+    overrides: dict[str, Any],
+    calls: list[tuple[str, str]],
+    reason: str,
+) -> None:
+    lite = _lite_reply(provider, stream, *calls)
+    if not calls:  # a text-only reply that would end the agent's turn
+        lite = (
+            _sse({"choices": [{"delta": {"content": "done"}}]})
+            if stream and provider == "openai"
+            else _sse({"type": "content_block_delta", "delta": {"text": "done"}})
+            if stream
+            else json.dumps(
+                {"content": [{"type": "text", "text": "done"}]}
+                if provider == "anthropic"
+                else {"choices": [{"message": {"content": "done"}}]}
+            ).encode()
+        )
+    app, _ = _guard_app(tmp_path, _with_cost(provider, stream, lite, 0.012), **overrides)
+    await _post_as(provider, app, _guard_request(provider, stream))
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    assert line["reason"] == f"judge; {reason}"
+    assert line["discarded_lite_cost_usd"] == 0.012
+
+
+@pytest.mark.asyncio
+async def test_kept_lite_reply_has_no_discarded_cost(tmp_path: Path) -> None:
+    lite = _with_cost("anthropic", False, _lite_reply("anthropic", False, EDIT), 0.012)
+    app, _ = _guard_app(tmp_path, lite, lite_guard="irreversible")
+    await _post_as("anthropic", app, _guard_request("anthropic", False))
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    assert line["tier"] == "lite"
+    assert "discarded_lite_cost_usd" not in line
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["anthropic", "openai"])
 @pytest.mark.parametrize("stream", [False, True])
@@ -1450,9 +1514,9 @@ async def test_guard_malformed_replies_the_classifier_cannot_see(
 def test_guard_fails_closed_on_odd_requests() -> None:
     raw = _lite_reply("anthropic", False, ("read", '{"path": "a"}'))
     cfg = RouterConfig(lite_guard="irreversible")
-    assert guard_reason(cfg, {"tools": ["read"]}, raw) == "lite_malformed"
-    assert guard_reason(cfg, _guard_request("anthropic", False), raw) is None
-    assert guard_reason(RouterConfig(), {"tools": ["read"]}, raw) is None  # level off
+    assert _guard(cfg, {"tools": ["read"]}, raw)[0] == "lite_malformed"
+    assert _guard(cfg, _guard_request("anthropic", False), raw)[0] is None
+    assert _guard(RouterConfig(), {"tools": ["read"]}, raw)[0] is None  # level off
 
 
 def test_guard_skips_tools_without_a_name() -> None:
@@ -1461,9 +1525,9 @@ def test_guard_skips_tools_without_a_name() -> None:
     read = {"type": "function", "function": {"name": "read", "parameters": {"required": ["path"]}}}
     body = {"tools": [custom, read]}
     ok = _lite_reply("openai", False, ("read", '{"path": "a.py"}'))
-    assert guard_reason(cfg, body, ok) is None
+    assert _guard(cfg, body, ok)[0] is None
     bad = _lite_reply("openai", False, ("apply_patch", "{}"))
-    assert guard_reason(cfg, body, bad) == "lite_malformed"  # not among the named tools
+    assert _guard(cfg, body, bad)[0] == "lite_malformed"  # not among the named tools
 
 
 @pytest.mark.asyncio
