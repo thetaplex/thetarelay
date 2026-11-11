@@ -170,6 +170,20 @@ def test_report_counts_unpaired_and_handles_missing_turns() -> None:
     assert "unpaired" in out
 
 
+def test_report_cost_includes_handed_back_triage_calls() -> None:
+    att = _attempts("hybrid", 1, [True, True])
+    rows = [
+        {"run": 0, "tier": "frontier", "cost_usd": 0.5},
+        {"run": 0, "tier": "lite", "cost_usd": 0.1, "triage_cost_usd": 0.4},
+    ]
+    row = next(
+        ln
+        for ln in routing.build_report(att, {"hybrid": rows}).splitlines()
+        if ln.startswith("hybrid ")
+    )
+    assert "$0.500" in row  # (0.5 + 0.1 + 0.4) / 2 tasks
+
+
 def _load_app() -> ModuleType:
     spec = importlib.util.spec_from_file_location("app_eval_run", SCRIPTS / "app_eval" / "run.py")
     assert spec

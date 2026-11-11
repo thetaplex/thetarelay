@@ -38,5 +38,9 @@ builds one spec with Claude Code and Pi arms and prints raw records.
 
 - [Cost of a full run] → Defaults stay small for local use (`--runs 1`); the release run uses
   `--runs 10` and is documented, not run in CI.
-- [Lite share drifts between runs] → Each random arm reads the share once, at its start, from
-  all completed runs of its routed arm, and records it in its attempts.
+- [Lite share drifts between runs] → Each run of a random arm reads the share at its start,
+  from all completed runs of its routed arm, and records it in its attempts.
+- [Escalated lite calls are not logged] → A lite reply that would end the turn and goes to the
+  frontier (`lite_stopped`) is logged only as the frontier call. Its lite cost and lite tier are
+  missing from both reports and from the share random arms copy. Small, since lite calls are
+  cheap; a turn-log follow-up.

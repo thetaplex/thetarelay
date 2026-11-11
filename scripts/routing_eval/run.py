@@ -238,7 +238,8 @@ def _run_costs(att: list[dict[str, Any]], rows: list[dict[str, Any]]) -> dict[in
     """Cost per task of each run: that run's cost over its attempted tasks.
 
     The cost comes from the attempts' own `cost_usd` when they all carry one (app eval
-    builds), otherwise from the turn logs.
+    builds), otherwise from the turn logs, including frontier triage calls that handed the
+    step back (`triage_cost_usd`).
     """
     tasks: dict[int, int] = defaultdict(int)
     for r in att:
@@ -246,7 +247,7 @@ def _run_costs(att: list[dict[str, Any]], rows: list[dict[str, Any]]) -> dict[in
     own = all("cost_usd" in r for r in att)
     cost: dict[int, float] = defaultdict(float)
     for t in att if own else rows:
-        cost[t["run"]] += t.get("cost_usd") or 0
+        cost[t["run"]] += (t.get("cost_usd") or 0) + (t.get("triage_cost_usd") or 0)
     return {run: cost[run] / n for run, n in tasks.items() if run in cost}
 
 
