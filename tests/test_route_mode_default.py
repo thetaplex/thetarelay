@@ -59,3 +59,12 @@ def test_startup_mode_chosen_by_model(
     monkeypatch.setenv("THETARELAY_FRONTIER_MODEL", OPENAI)
     err = _startup(monkeypatch, capsys)
     assert f"route mode: judge ({REASON})" in err
+
+
+def test_startup_plain_default(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("THETARELAY_ROUTE_MODE", raising=False)
+    monkeypatch.setenv("THETARELAY_FRONTIER_MODEL", "anthropic/claude-opus-5.5")
+    err = _startup(monkeypatch, capsys)
+    assert "route mode: hybrid\n" in err

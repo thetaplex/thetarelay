@@ -41,6 +41,11 @@ The system SHALL print the route mode at start-up and, when it was chosen by mod
 - **WHEN** `THETARELAY_ROUTE_MODE=triage`
 - **THEN** the start-up output says the route mode is `triage`, with no reason
 
+#### Scenario: Plain default
+
+- **WHEN** neither `THETARELAY_ROUTE_MODE` nor an `openai/` frontier model is set
+- **THEN** the start-up output says the route mode is `hybrid`, with no reason
+
 #### Scenario: Chosen by model
 
 - **WHEN** the route mode was chosen because the frontier model is an OpenAI model
