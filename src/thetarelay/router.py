@@ -125,14 +125,15 @@ def _failure(text: str, is_error: bool, group: Group, command: str | None) -> st
     shell = not (group == "read" and command is None)
     exits = [(ln, int(m[1] or m[2])) for ln in lines if shell and (m := _EXIT.match(ln))]
     keyword = next((ln for ln in lines if _FAILURE.search(ln)), None)
+    # Exit code 1 from a search means "no match", even when the agent sets the error flag.
+    search = group == "read" and command is not None and last_program(command) in _SEARCHES
+    if search and exits and exits[-1][1] == 1:
+        return None
     if is_error:
         return next((ln for ln, code in exits if code), keyword or (lines[0] if lines else ""))
     if exits:
         line, code = exits[-1]
-        search = command is not None and last_program(command) in _SEARCHES
-        if code == 0 or (code == 1 and group == "read" and search):
-            return None
-        return line
+        return None if code == 0 else line
     if group == "read":
         return None
     ran = [i for i, ln in enumerate(lines) if _UNITTEST_RAN.match(ln)]

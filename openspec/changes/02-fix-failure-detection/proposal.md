@@ -42,6 +42,8 @@ None.
 - `src/thetarelay/router.py`: `events()` and the failure check. Judge summaries change for
   conversations that read files with error keywords, and for Pi commands that exit non-zero
   without a keyword.
-- Judge input changes. Re-score the routing eval turn logs and check the judge threshold;
+- Judge input changes. The routing eval turn logs keep only summaries, so they cannot be
+  re-scored; `scripts/failure_eval.py` compares old and new verdicts on captured app eval runs.
+  Checking the judge threshold needs a new routing eval run and is a follow-up.
   `scripts/judge_eval` uses hand-written summaries and does not go through `events()`.
 - Uses `classify` from `step-classification`.

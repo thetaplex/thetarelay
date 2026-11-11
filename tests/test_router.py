@@ -845,6 +845,16 @@ def test_read_command_that_fails(command: str, output: str) -> None:
     assert _sh(command, output).failed
 
 
+@pytest.mark.parametrize(("provider", "flag"), [("anthropic", True), ("openai", False)])
+def test_search_with_no_match_and_error_flag_is_not_a_failure(provider: str, flag: bool) -> None:
+    extra = {"is_error": True} if flag else {}
+    assert not _result("bash", {"command": "rg foo"}, "Exit code 1", provider, **extra).failed
+
+
+def test_search_with_error_flag_and_no_exit_line_is_a_failure() -> None:
+    assert _result("bash", {"command": "grep foo a.py"}, "", is_error=True).failed
+
+
 def test_unlinked_search_exit_one_is_a_failure() -> None:
     body = _anth([], ["zzz"])
     body["messages"][1]["content"][0]["content"] = "Command exited with code 1"

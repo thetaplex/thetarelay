@@ -23,15 +23,22 @@ Tool results are not linked to their calls. `failed` feeds the judge summary (`_
 - **Exit status formats:** Pi `Command exited with code N`, plus `exit code N` and
   `exit status N`. Pi adds its line only when N is not 0, so a Pi result without one succeeded.
 - **No-match exit:** exit code 1 from a `read` step whose last part is `rg`, `grep`, `egrep` or
-  `fgrep` is not a failure. The command must be parsed again to find that part; an unlinked or
+  `fgrep` is not a failure, checked before the error flag: Claude Code may flag every non-zero
+  exit as an error. With the flag set and no exit line, the step still fails. The command must be parsed again to find that part; an unlinked or
   unparsable call gets no exception.
 - **Test summary patterns:** pytest (`N failed`, `N passed`, `N error`), unittest
   (`FAILED (failures=N)`, `OK`), Jest/Vitest (`Tests: N failed`), cargo (`test result: FAILED`).
   The last summary line in the output wins.
+- **Whole lines only:** exit status and summary patterns must match a whole line (after
+  stripping whitespace and pytest's `=` framing), so `processed 3 passed items` cannot hide a
+  Traceback. A passing pytest summary needs its timing (`in 2.1s`); a failing one does not, since
+  it can only add a failure. A bare `OK` counts only after a `Ran N tests` line.
+- **Non-shell reads:** a `read` call with no `command` argument returns file content, so its
+  text is never checked for exit lines.
 
 ## Risks / Trade-offs
 
 - [Other agents phrase exit status differently] → Record unknown formats from turn logs; until
   then their results fall back to keywords, which is today's behaviour.
-- [Fewer failures means more lite routing] → Re-score the routing eval turn logs before and
-  after, and check the judge threshold.
+- [Fewer failures means more lite routing] → Run the routing eval again and check the judge
+  threshold (follow-up); the old turn logs keep only summaries and cannot be re-scored.

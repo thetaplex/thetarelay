@@ -22,6 +22,11 @@ group of that call. A result whose id matches no call SHALL get the group `irrev
 - **WHEN** a tool result's id matches no tool call in the request
 - **THEN** it gets the group `irreversible`
 
+#### Scenario: Id that is not a string
+
+- **WHEN** a tool call or tool result has an id that is not a string
+- **THEN** the result is unlinked and gets the group `irreversible`
+
 ### Requirement: Structured signals take precedence
 
 The system SHALL decide failure from the first signal present, in this order: the result's
@@ -55,11 +60,39 @@ when none is present, and never to `read` steps.
   `Traceback`
 - **THEN** the step is a failure
 
+### Requirement: Structured signals match whole lines
+
+An exit status or test summary SHALL count only when it makes up a whole line, ignoring
+surrounding whitespace and `=` framing. A passing pytest summary SHALL count only when it ends
+with its timing (`in 2.1s`), and a bare `OK` only after a `Ran N tests` line.
+
+#### Scenario: Signal inside a line
+
+- **WHEN** a `run` step's result contains `Traceback` and a line `processed 3 passed items`
+- **THEN** the step is a failure
+
+#### Scenario: Passing pytest summary without timing
+
+- **WHEN** a `run` step's result contains `Error: Cannot find module x` and ends with `12 passed`
+- **THEN** the step is a failure
+
+#### Scenario: Failing pytest summary without timing
+
+- **WHEN** a `run` step's result ends with `3 failed, 41 passed`
+- **THEN** the step is a failure
+
+#### Scenario: Bare OK without a Ran line
+
+- **WHEN** a `run` step's result contains `Traceback` and ends with `OK`, with no `Ran N tests`
+  line before it
+- **THEN** the step is a failure
+
 ### Requirement: Read steps do not fail on content
 
 The system SHALL NOT mark a `read` step as failed because of its output text. A `read` step
-SHALL fail only on an error flag or a non-zero exit status, and exit code 1 from a search
-command (`rg`, `grep`) SHALL NOT count.
+SHALL fail only on an error flag or a non-zero exit status. Exit code 1 from a search command
+(`rg`, `grep`, `egrep`, `fgrep`) SHALL NOT count, even when the result has the error flag. A read
+tool that runs no command (such as `read` or `grep`) SHALL NOT be checked for exit status lines.
 
 #### Scenario: Reading a file that mentions errors
 
@@ -75,6 +108,17 @@ command (`rg`, `grep`) SHALL NOT count.
 #### Scenario: Search with no match
 
 - **WHEN** a shell command `rg foo` exits with `Command exited with code 1` and no other output
+- **THEN** the step is not a failure
+
+#### Scenario: Search with no match and the error flag
+
+- **WHEN** a shell command `rg foo` returns an Anthropic result with `is_error: true` and the text
+  `Exit code 1`
+- **THEN** the step is not a failure
+
+#### Scenario: File content that looks like an exit status
+
+- **WHEN** the agent reads a file with the `read` tool and a line of it is `exit code 3`
 - **THEN** the step is not a failure
 
 #### Scenario: Read command that fails
