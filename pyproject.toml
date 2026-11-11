@@ -74,7 +74,7 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PT", "PTH", "S"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]
 "scripts/**" = ["S311", "S603", "S607"]
-"scripts/app_eval/{hidden_tests,reference}/**" = ["S101", "B008"]
+"scripts/app_eval/specs/*/{hidden_tests,reference}/**" = ["S101", "B008"]
 
 [tool.mypy]
 strict = true

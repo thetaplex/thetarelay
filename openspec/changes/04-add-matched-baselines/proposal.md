@@ -17,7 +17,7 @@ saving in `docs/reference/tested-models.md` rests on that one spec.
   arms as `routing_eval`.
 - Both reports: per arm, mean and 95 % confidence interval of cost per task and of hidden-test
   pass rate, and the paired difference to the matched random arm.
-- Defaults: 10 runs per arm.
+- Runs: `--runs 1` by default for local use; the documented release run uses `--runs 10`.
 
 ## Capabilities
 
@@ -33,11 +33,11 @@ None.
 
 - `scripts/routing_eval/run.py`, `scripts/app_eval/run.py`, new specs under
   `scripts/app_eval/`.
-- Cost: about 10 runs × 6 arms × 3 specs of real agent sessions. Run once per release, not in CI.
+- Cost: about 10 runs × 12 arms × 3 specs (360 agent sessions). Run once per release, not in CI.
 - The research protocol (`paper/PROTOCOL.md` on `research/paper`) should reference these arms
   rather than define its own.
 
-## Open for review
+## Decided
 
-- Which two extra app specs? Proposal: one smaller than the current app (a CLI tool), one larger
-  (two services sharing a database).
+- Extra app specs: `todo-cli` (smaller, a CLI tool) and `inventory` (larger, two services
+  sharing a database). See `design.md`.

@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - The turn log records the step groups of each reply (`step_groups`), cache-write tokens and the triage verdict.
 
+### Changed
+
+- Evaluation harnesses (`scripts/routing_eval`, `scripts/app_eval`): matched random arms for `judge`, `triage` and `hybrid`, ablation arms, three app specs, and reports with confidence intervals and paired differences. See [Tested models](docs/reference/tested-models.md#release-run).
+
 ### Fixed
 
 - Reading a file that mentions errors no longer counts as a failed step, so the conversation can stay on the lite model.
