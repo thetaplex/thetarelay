@@ -17,6 +17,16 @@ name starts with `openai/`, and `hybrid` for all other frontier models.
 - **WHEN** `THETARELAY_FRONTIER_MODEL=openai/gpt-6.1-terra` and no route mode is set
 - **THEN** the route mode is `judge`
 
+#### Scenario: Other frontier model
+
+- **WHEN** `THETARELAY_FRONTIER_MODEL=anthropic/claude-opus-5.5` and no route mode is set
+- **THEN** the route mode is `hybrid`
+
+#### Scenario: Empty route mode
+
+- **WHEN** `THETARELAY_FRONTIER_MODEL=openai/gpt-6.1-terra` and `THETARELAY_ROUTE_MODE=` (empty)
+- **THEN** the route mode is `judge`
+
 #### Scenario: Explicit mode wins
 
 - **WHEN** `THETARELAY_FRONTIER_MODEL=openai/gpt-6.1-terra` and `THETARELAY_ROUTE_MODE=hybrid`
@@ -25,6 +35,16 @@ name starts with `openai/`, and `hybrid` for all other frontier models.
 ### Requirement: Start-up message
 
 The system SHALL print the route mode at start-up and, when it was chosen by model, the reason.
+
+#### Scenario: Mode set by the user
+
+- **WHEN** `THETARELAY_ROUTE_MODE=triage`
+- **THEN** the start-up output says the route mode is `triage`, with no reason
+
+#### Scenario: Plain default
+
+- **WHEN** neither `THETARELAY_ROUTE_MODE` nor an `openai/` frontier model is set
+- **THEN** the start-up output says the route mode is `hybrid`, with no reason
 
 #### Scenario: Chosen by model
 

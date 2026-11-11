@@ -11,8 +11,6 @@ the `hybrid` default and pay for triage that cannot work.
 - When `THETARELAY_ROUTE_MODE` is not set, the default depends on the frontier model: `judge`
   for `openai/` models, `hybrid` for all others.
 - The proxy prints the chosen mode and why at start-up.
-- Tested pairs table: add Opus 5.5 with a local Qwen lite model once measured (a test run, not
-  code).
 
 ## Capabilities
 
@@ -30,7 +28,8 @@ None.
 - Behaviour change for users of OpenAI frontier models who did not set a route mode; note it in
   the changelog.
 
-## Open for review
+## Decided
 
-- Is a prefix rule (`openai/`) enough, or should the table hold exact model names? Proposal:
-  prefix rule; exact names only when a model in a family behaves differently.
+- Prefix rule (`openai/`), no table of exact names. See `design.md`.
+- The tested-pairs row for Opus 5.5 with a local Qwen lite model needs a paid evaluation run and
+  is not part of this change.

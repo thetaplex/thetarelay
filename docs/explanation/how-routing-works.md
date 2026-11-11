@@ -28,7 +28,7 @@ the tier.
    last message: if a smaller model can do the next step correctly, reply only `<EASY/>`. If
    the frontier model does the step, its reply goes to the agent unchanged, with no extra call.
    If it answers `<EASY/>`, ThetaRelay drops that answer and sends the original request, without
-   the note, to the lite tier. With `THETARELAY_ROUTE_MODE=judge`, this rule is off and the
+   the note, to the lite tier. With `THETARELAY_ROUTE_MODE=judge` (the default for `openai/` frontier models), this rule is off and the
    request goes to the frontier tier.
 5. **Errors.** If the judge does not answer, the request goes to the frontier tier. If the lite
    server does not answer or returns a 5xx status, ThetaRelay sends the same request to the

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Literal
 
 
 def _env(name: str, default: str) -> str:
@@ -82,6 +83,8 @@ class RouterConfig:
     # and then the request goes to the lite tier. `hybrid`: the judge first; if P(easy) is not
     # above the threshold, the frontier model triages instead of a plain frontier request.
     route_mode: str = "hybrid"
+    # Why route_mode has its value: "set" (by the user), "default", "openai frontier model".
+    route_mode_reason: Literal["set", "default", "openai frontier model"] = "default"
     random_lite_share: float = 0.5
     # Share of frontier requests also sent to the lite tier as a shadow; above 0 the judge is
     # asked in every mode.
@@ -119,6 +122,15 @@ class RouterConfig:
 
     @classmethod
     def from_env(cls) -> RouterConfig:
+        frontier_model = _env("THETARELAY_FRONTIER_MODEL", cls.frontier_model)
+        mode = _env("THETARELAY_ROUTE_MODE", "")
+        reason: Literal["set", "default", "openai frontier model"]
+        if mode:
+            reason = "set"
+        elif frontier_model.startswith("openai/"):
+            mode, reason = "judge", "openai frontier model"
+        else:
+            mode, reason = cls.route_mode, "default"
         return cls(
             host=_env("THETARELAY_HOST", cls.host),
             port=_env_int("THETARELAY_PORT", cls.port),
@@ -135,7 +147,7 @@ class RouterConfig:
             frontier_base_url=_env("THETARELAY_FRONTIER_BASE_URL", cls.frontier_base_url).rstrip(
                 "/"
             ),
-            frontier_model=_env("THETARELAY_FRONTIER_MODEL", cls.frontier_model),
+            frontier_model=frontier_model,
             frontier_api_key=_env("THETARELAY_FRONTIER_API_KEY", "")
             or _env("OPENROUTER_API_KEY", ""),
             judge_url=_env("THETARELAY_JUDGE_URL", cls.judge_url),
@@ -144,7 +156,8 @@ class RouterConfig:
             judge_timeout_seconds=_env_float("THETARELAY_JUDGE_TIMEOUT", cls.judge_timeout_seconds),
             easy_threshold=_env_float("THETARELAY_EASY_THRESHOLD", cls.easy_threshold),
             stay_requests=_env_int("THETARELAY_STAY_REQUESTS", cls.stay_requests),
-            route_mode=_env("THETARELAY_ROUTE_MODE", cls.route_mode),
+            route_mode=mode,
+            route_mode_reason=reason,
             random_lite_share=_env_float("THETARELAY_RANDOM_LITE_SHARE", cls.random_lite_share),
             shadow_share=_env_float("THETARELAY_SHADOW_SHARE", cls.shadow_share),
             escalate_on_stop=_env_bool("THETARELAY_ESCALATE_ON_STOP", cls.escalate_on_stop),
