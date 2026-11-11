@@ -17,6 +17,7 @@ from typing import Any, Literal
 import httpx
 
 from .config import RouterConfig
+from .steps import Group, classify, last_program
 
 Tier = Literal["lite", "frontier"]
 
@@ -37,10 +38,24 @@ JUDGE_QUESTION = {
 }
 
 # Signs that a tool result is a failure. A failure keeps the conversation on the frontier tier.
+# Structured signals come first (see _failure); keywords are the fallback.
 _FAILURE = re.compile(
-    r"\b(FAILED|FAILURES?|Traceback|AssertionError|panicked|Exception|"
-    r"[Ee]rror:|exit (code|status) [1-9]\d*|non-zero exit)"
+    r"\b(FAILED|FAILURES?|Traceback|AssertionError|panicked|Exception|[Ee]rror:|non-zero exit)"
 )
+# Structured signals match a whole line (stripped of pytest's `=` framing), never part of one.
+# Pi: `Command exited with code N` (only when N is not 0); others: `exit code N`, `exit status N`.
+_EXIT = re.compile(r"^(?:Command exited with code (\d+)|(?i:exit (?:code|status)):? (\d+))$")
+# Test runner summaries: pytest, unittest, Jest, cargo. A pytest line without failures must
+# end `in Ns` to count, so a stray `12 passed` cannot mask a keyword failure.
+_PYTEST = re.compile(
+    r"^(\d+ (passed|failed|errors?|skipped|warnings?|deselected|xfailed|xpassed)[, ]*)+"
+    r"( in [\d.]+s\b.*)?$"
+)
+_SUMMARY = re.compile(r"^FAILED \((failures|errors)=|^Tests:\s+\d|^test result: (ok|FAILED)\.")
+_UNITTEST_OK = re.compile(r"^OK( \(.*\))?$")
+_UNITTEST_RAN = re.compile(r"^Ran \d+ tests?\b")
+_SUMMARY_FAILED = re.compile(r"\b[1-9]\d* (failed|errors?)\b|FAILED")
+_SEARCHES = frozenset({"rg", "grep", "egrep", "fgrep"})
 _REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
 _STEP_LIMIT = 12
 _GOAL_CHARS = 300
@@ -53,7 +68,15 @@ class Event:
 
     kind: Literal["user", "assistant", "call", "result"]
     text: str
-    failed: bool = False
+    # Results only: the line that decided the failure (None: not a failure), and the step group
+    # and shell command of the linked call.
+    failure: str | None = None
+    group: Group | None = None
+    command: str | None = None
+
+    @property
+    def failed(self) -> bool:
+        return self.failure is not None
 
 
 @dataclass
@@ -80,9 +103,56 @@ def _text(content: Any) -> str:
     return ""
 
 
+def _link(calls: dict[str, tuple[str, Any]], call_id: Any) -> tuple[Group, str | None]:
+    """Step group and shell command of the call a result answers; unknown id is irreversible."""
+    if not isinstance(call_id, str) or call_id not in calls:
+        return "irreversible", None
+    name, args = calls[call_id]
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            args = None
+    cmd = args.get("command") if isinstance(args, dict) else None
+    return classify(name, calls[call_id][1]), cmd if isinstance(cmd, str) else None
+
+
+def _failure(text: str, is_error: bool, group: Group, command: str | None) -> str | None:
+    """The line that decides the step failed, or None. The first signal present decides:
+    the error flag, an exit status, a test summary, then keywords (not for read steps)."""
+    lines = [s for ln in text.splitlines() if (s := ln.strip(" \t="))]
+    # A non-shell read tool reports no exit status: its text is file content.
+    shell = not (group == "read" and command is None)
+    exits = [(ln, int(m[1] or m[2])) for ln in lines if shell and (m := _EXIT.match(ln))]
+    keyword = next((ln for ln in lines if _FAILURE.search(ln)), None)
+    # Exit code 1 from a search means "no match", even when the agent sets the error flag.
+    search = group == "read" and command is not None and last_program(command) in _SEARCHES
+    if search and exits and exits[-1][1] == 1:
+        return None
+    if is_error:
+        return next((ln for ln, code in exits if code), keyword or (lines[0] if lines else ""))
+    if exits:
+        line, code = exits[-1]
+        return None if code == 0 else line
+    if group == "read":
+        return None
+    ran = [i for i, ln in enumerate(lines) if _UNITTEST_RAN.match(ln)]
+    summaries = [
+        ln
+        for i, ln in enumerate(lines)
+        if _SUMMARY.match(ln)
+        or ((m := _PYTEST.match(ln)) and (m[3] or _SUMMARY_FAILED.search(ln)))
+        or (_UNITTEST_OK.match(ln) and ran and ran[0] < i)
+    ]
+    if summaries:
+        return summaries[-1] if _SUMMARY_FAILED.search(summaries[-1]) else None
+    return keyword
+
+
 def events(body: dict[str, Any], provider: str) -> list[Event]:
     """Flatten the conversation of an Anthropic or OpenAI request into steps."""
     out: list[Event] = []
+    calls: dict[str, tuple[str, Any]] = {}
     for msg in body.get("messages") or []:
         if not isinstance(msg, dict):
             continue
@@ -90,12 +160,15 @@ def events(body: dict[str, Any], provider: str) -> list[Event]:
         if provider == "openai":
             if role == "tool":
                 text = _text(content)
-                out.append(Event("result", text, bool(_FAILURE.search(text))))
+                group, cmd = _link(calls, msg.get("tool_call_id"))
+                out.append(Event("result", text, _failure(text, False, group, cmd), group, cmd))
                 continue
             if text := _text(content).strip():
                 out.append(Event("assistant" if role == "assistant" else "user", text))
             for tc in msg.get("tool_calls") or []:
                 fn = tc.get("function") or {}
+                if isinstance(tc.get("id"), str):
+                    calls[tc["id"]] = (fn.get("name", ""), fn.get("arguments", ""))
                 out.append(Event("call", f"{fn.get('name', '')} {fn.get('arguments', '')}"))
             continue
         if isinstance(content, str):
@@ -107,11 +180,14 @@ def events(body: dict[str, Any], provider: str) -> list[Event]:
                 out.append(Event("assistant" if role == "assistant" else "user", block["text"]))
             elif kind == "tool_use":
                 args = json.dumps(block.get("input", {}), ensure_ascii=False)
+                if isinstance(block.get("id"), str):
+                    calls[block["id"]] = (block.get("name", ""), args)
                 out.append(Event("call", f"{block.get('name', '')} {args}"))
             elif kind == "tool_result":
                 text = _text(block.get("content", ""))
-                failed = bool(block.get("is_error")) or bool(_FAILURE.search(text))
-                out.append(Event("result", text, failed))
+                group, cmd = _link(calls, block.get("tool_use_id"))
+                failure = _failure(text, block.get("is_error") is True, group, cmd)
+                out.append(Event("result", text, failure, group, cmd))
     # Agent harness reminders are not part of the task.
     for e in out:
         if e.kind == "user":
@@ -127,9 +203,8 @@ def _one_line(text: str, limit: int) -> str:
 def _step_line(e: Event) -> str:
     if e.kind == "result":
         lines = e.text.strip().splitlines() or [""]
-        if e.failed:
-            hit = next((ln for ln in lines if _FAILURE.search(ln)), lines[0])
-            return "result FAILED: " + _one_line(hit, 120)
+        if e.failure is not None:
+            return "result FAILED: " + _one_line(e.failure, 120)
         return "result ok: " + _one_line(lines[-1], 80)
     return f"{e.kind}: " + _one_line(e.text, 120)
 
