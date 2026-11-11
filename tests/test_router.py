@@ -1212,6 +1212,24 @@ async def test_cut_stream_with_unreadable_call_is_irreversible(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_cut_stream_before_any_tool_call_has_no_step_groups(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, None)
+    text = {"choices": [{"delta": {"content": "Let me look"}}]}
+
+    async def cut() -> Any:
+        yield _sse(text)[: -len(b"data: [DONE]\n\n")]
+        raise httpx.ReadError("boom")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=cut(), headers={"content-type": "text/event-stream"})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await _post_openai(app, {**TOOL_RUN, "stream": True})
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    assert (line["stream_cut"], line["step_groups"]) == (True, [])
+
+
+@pytest.mark.asyncio
 async def test_normal_stream_has_no_stream_cut(tmp_path: Path) -> None:
     sse = _sse({"choices": [{"delta": {"content": "hi"}, "finish_reason": "stop"}]})
     await _post(_reply_app(tmp_path, sse, "text/event-stream"), {**EASY, "stream": True})
