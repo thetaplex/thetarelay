@@ -21,7 +21,7 @@ from fastapi.responses import StreamingResponse
 from . import __version__
 from .config import RouterConfig
 from .router import Decision, conversation_key, decide, events
-from .steps import signals_tool_call
+from .steps import classify, signals_tool_call, tool_calls
 
 logger = logging.getLogger("thetarelay.proxy")
 
@@ -119,21 +119,45 @@ def _outbound(
 
 
 def _usage(provider: str, data: dict[str, Any]) -> dict[str, Any]:
-    u = data.get("usage") or {}
+    u = data.get("usage")
+    u = u if isinstance(u, dict) else {}
     if provider == "anthropic":
         return {
             "input_tokens": u.get("input_tokens"),
             "cached_tokens": u.get("cache_read_input_tokens"),
+            "cache_write_tokens": u.get("cache_creation_input_tokens"),
             "output_tokens": u.get("output_tokens"),
             "cost_usd": u.get("cost"),
         }
-    details = u.get("prompt_tokens_details") or {}
+    details = u.get("prompt_tokens_details")
+    details = details if isinstance(details, dict) else {}
     return {
         "input_tokens": u.get("prompt_tokens"),
-        "cached_tokens": details.get("cached_tokens") if isinstance(details, dict) else None,
+        "cached_tokens": details.get("cached_tokens"),
+        "cache_write_tokens": details.get("cache_write_tokens"),
         "output_tokens": u.get("completion_tokens"),
         "cost_usd": u.get("cost"),
     }
+
+
+def _step_groups(status: int, raw: bytes) -> list[str]:
+    """Step groups of the tool calls in a reply; `irreversible` if a call cannot be read."""
+    if status != 200:
+        return []
+    try:
+        calls = tool_calls(raw)
+        if calls:
+            return [classify(name, args) for name, args in calls]
+        return ["irreversible"] if signals_tool_call(raw) else []
+    except Exception:  # a reply we cannot read must not break the proxy
+        return ["irreversible"]
+
+
+def _cut_step_groups(seen: bytes) -> list[str]:
+    """Step groups of a stream cut short; a started but unreadable tool call is irreversible."""
+    groups = _step_groups(200, seen)
+    started = b'"tool_use"' in seen or b'"tool_calls"' in seen
+    return groups or (["irreversible"] if started else [])
 
 
 def _text_verdict(text: str) -> bool | None:
@@ -405,6 +429,8 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             "judge_ms": decision.judge_ms,
             "judge_error": decision.judge_error,
             "judge_state": decision.judge_state,
+            "cached_tokens": None,
+            "cache_write_tokens": None,
         }
         route_headers = {
             "x-thetarelay-tier": decision.tier,
@@ -430,6 +456,7 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
 
         def _bad_gateway(exc: httpx.TransportError) -> Response:
             record["status"] = 502
+            record["step_groups"] = []
             record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
             recorder.record(record)
             return Response(
@@ -448,10 +475,14 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
                 )
             except httpx.TransportError as exc:
                 return _bad_gateway(exc)
+            if triaged.status_code == 200:
+                record["triage_verdict"] = "easy" if easy else "did_step"
             if easy:
                 # The frontier model hands the step over; the lite tier gets the original body.
                 triaged = None
                 record["triage_cost_usd"] = triage_usage.get("cost_usd")
+                record["triage_cached_tokens"] = triage_usage.get("cached_tokens")
+                record["triage_cache_write_tokens"] = triage_usage.get("cache_write_tokens")
                 decision.tier = "lite"
                 url, out_body, hdrs = _outbound(cfg, body, in_headers, "lite", provider)
                 record.update(tier="lite", model=out_body["model"])
@@ -504,20 +535,31 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
 
             async def relay() -> AsyncIterator[bytes]:
                 usage = StreamUsage()
+                seen = bytearray()
+                finished = False
                 try:
                     async for chunk in upstream.aiter_bytes():
                         usage.feed(chunk)
+                        seen += chunk
                         yield chunk
+                    finished = True
                 except httpx.TransportError as exc:
                     logger.warning("Upstream stream interrupted: %s", exc)
                     record["status"] = 502
                 finally:
-                    await upstream.aclose()
                     if usage.usage:
                         record.update(_usage(provider, {"usage": usage.usage}))
                     record.setdefault("status", upstream.status_code)
+                    if finished:
+                        record["step_groups"] = _step_groups(record["status"], bytes(seen))
+                    else:
+                        # Cut short (upstream error or client gone): the agent may already
+                        # hold a tool call, so count what was relayed, whatever the status.
+                        record["stream_cut"] = True
+                        record["step_groups"] = _cut_step_groups(bytes(seen))
                     record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
                     recorder.record(record)
+                    await upstream.aclose()
 
             resp_headers = {
                 k: v for k, v in upstream.headers.items() if k.lower() not in _DROP_RESPONSE_HEADERS
@@ -537,6 +579,7 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
             return _bad_gateway(exc)
         record["status"] = resp.status_code
         record["upstream_ms"] = (time.perf_counter() - started) * 1000.0
+        record["step_groups"] = _step_groups(resp.status_code, resp.content)
         if resp.status_code == 200:
             with contextlib.suppress(ValueError):
                 record.update(_usage(provider, resp.json()))

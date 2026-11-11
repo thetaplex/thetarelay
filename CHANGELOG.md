@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- The turn log records the step groups of each reply (`step_groups`), cache-write tokens and the triage verdict.
+
 ### Fixed
 
 - Reading a file that mentions errors no longer counts as a failed step, so the conversation can stay on the lite model.

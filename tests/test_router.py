@@ -896,3 +896,382 @@ def test_unittest_ok_after_ran_line_passes() -> None:
 def test_read_tool_text_about_exit_codes_is_not_a_failure() -> None:
     assert not _result("read", {"path": "README.md"}, "Returns exit code 2 on bad input.").failed
     assert not _result("read", {"path": "a.txt"}, "Command exited with code 2").failed
+
+
+def _last_line(tmp_path: Path) -> dict[str, Any]:
+    line: dict[str, Any] = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    return line
+
+
+@pytest.mark.asyncio
+async def test_log_cache_write_tokens_openai(tmp_path: Path) -> None:
+    reply = {**OAI_TOOL, "usage": {"prompt_tokens_details": {"cache_write_tokens": 1200}}}
+    app, _ = _triage_app(tmp_path, json.dumps(reply).encode())
+    await _post_openai(app, TOOL_RUN)
+    assert _last_line(tmp_path)["cache_write_tokens"] == 1200
+
+
+@pytest.mark.asyncio
+async def test_log_cache_write_tokens_openai_streamed(tmp_path: Path) -> None:
+    hard = _sse(
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c2"}]}}]},
+        {"choices": [], "usage": {"prompt_tokens_details": {"cache_write_tokens": 1200}}},
+    )
+    app, _ = _triage_app(tmp_path, hard, "text/event-stream")
+    await _post_openai(app, {**TOOL_RUN, "stream": True})
+    assert _last_line(tmp_path)["cache_write_tokens"] == 1200
+
+
+@pytest.mark.asyncio
+async def test_log_cache_write_tokens_null_when_not_reported(tmp_path: Path) -> None:
+    app, _ = _triage_app(tmp_path, json.dumps(OAI_TOOL).encode())
+    await _post_openai(app, TOOL_RUN)
+    assert _last_line(tmp_path)["cache_write_tokens"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_log_cache_write_tokens_anthropic(tmp_path: Path, stream: bool) -> None:
+    usage = {"cache_read_input_tokens": 0, "cache_creation_input_tokens": 48000}
+    app, _ = _app(tmp_path, 0.0)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "judge.test" in str(request.url):
+            return httpx.Response(
+                200, json={"answers": {"route": {"probabilities": {"easy": 0.0, "hard": 1.0}}}}
+            )
+        if stream:
+            return httpx.Response(
+                200,
+                content=_sse({"type": "message_start", "message": {"usage": usage}}),
+                headers={"content-type": "text/event-stream"},
+            )
+        return httpx.Response(200, json={"content": [], "usage": usage})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await _post(app, {**EASY, "stream": stream})
+    line = _last_line(tmp_path)
+    assert line["cached_tokens"] == 0
+    assert line["cache_write_tokens"] == 48000
+
+
+@pytest.mark.asyncio
+async def test_log_triage_verdict_easy(tmp_path: Path) -> None:
+    app, _ = _triage_app(tmp_path, json.dumps(OAI_EASY).encode())
+    await _post_openai(app, TOOL_RUN)
+    assert _last_line(tmp_path)["triage_verdict"] == "easy"
+
+
+@pytest.mark.asyncio
+async def test_log_triage_verdict_did_step(tmp_path: Path) -> None:
+    app, _ = _triage_app(tmp_path, json.dumps(OAI_TOOL).encode())
+    await _post_openai(app, TOOL_RUN)
+    assert _last_line(tmp_path)["triage_verdict"] == "did_step"
+    hard = _sse({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c2"}]}}]})
+    app, _ = _triage_app(tmp_path, hard, "text/event-stream")
+    await _post_openai(app, {**TOOL_RUN, "stream": True})
+    assert _last_line(tmp_path)["triage_verdict"] == "did_step"
+
+
+@pytest.mark.asyncio
+async def test_log_no_triage_verdict_when_not_triaged(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, 0.9)
+    await _post(app, EASY)
+    assert "triage_verdict" not in _last_line(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_log_triage_cache_usage_on_handed_back_request(tmp_path: Path) -> None:
+    usage = {"cost": 0.001, "cache_read_input_tokens": 500, "cache_creation_input_tokens": 700}
+    reply = {"content": [{"type": "text", "text": "<EASY/>"}], "usage": usage}
+    app, _ = _triage_app(tmp_path, json.dumps(reply).encode())
+    await _post(app, {**EASY, "messages": [{"role": "user", "content": "ls"}]})
+    line = _last_line(tmp_path)
+    assert line["triage_verdict"] == "easy"
+    assert line["triage_cached_tokens"] == 500
+    assert line["triage_cache_write_tokens"] == 700
+
+
+@pytest.mark.asyncio
+async def test_log_cache_fields_null_on_error_reply(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, 0.0)
+    app.state.http_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda r: (
+                httpx.Response(
+                    200, json={"answers": {"route": {"probabilities": {"easy": 0.0, "hard": 1.0}}}}
+                )
+                if "judge.test" in str(r.url)
+                else httpx.Response(429, json={"error": "slow down"})
+            )
+        )
+    )
+    await _post(app, EASY)
+    line = _last_line(tmp_path)
+    assert line["status"] == 429
+    assert line["cached_tokens"] is None
+    assert line["cache_write_tokens"] is None
+
+
+@pytest.mark.asyncio
+async def test_log_cache_fields_null_on_stream_without_usage(tmp_path: Path) -> None:
+    hard = _sse({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c2"}]}}]})
+    app, _ = _triage_app(tmp_path, hard, "text/event-stream")
+    await _post_openai(app, {**TOOL_RUN, "stream": True})
+    line = _last_line(tmp_path)
+    assert line["cached_tokens"] is None
+    assert line["cache_write_tokens"] is None
+
+
+# Step groups of the reply.
+
+
+def _reply_app(
+    tmp_path: Path,
+    reply: bytes,
+    content_type: str = "application/json",
+    status: int = 200,
+    p_easy: float | None = 0.9,
+    **overrides: Any,
+) -> Any:
+    app, _ = _app(tmp_path, p_easy, **overrides)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "judge.test" in str(request.url):
+            probs = {"easy": p_easy, "hard": 1 - (p_easy or 0)}
+            return httpx.Response(200, json={"answers": {"route": {"probabilities": probs}}})
+        return httpx.Response(status, content=reply, headers={"content-type": content_type})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return app
+
+
+def _groups(tmp_path: Path) -> Any:
+    return json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])["step_groups"]
+
+
+def _tool_use(*calls: tuple[str, dict[str, Any]]) -> bytes:
+    content = [
+        {"type": "tool_use", "id": f"t{i}", "name": n, "input": a} for i, (n, a) in enumerate(calls)
+    ]
+    return json.dumps({"content": content, "stop_reason": "tool_use"}).encode()
+
+
+@pytest.mark.asyncio
+async def test_step_groups_lite_reply_with_two_calls(tmp_path: Path) -> None:
+    reply = _tool_use(("read", {"file_path": "a.py"}), ("edit", {"file_path": "a.py"}))
+    resp = await _post(_reply_app(tmp_path, reply), EASY)
+    assert resp.content == reply
+    assert _groups(tmp_path) == ["read", "write"]
+
+
+@pytest.mark.asyncio
+async def test_step_groups_text_and_error_replies_are_empty(tmp_path: Path) -> None:
+    text = json.dumps({"content": [{"type": "text", "text": "hi"}]}).encode()
+    await _post(_reply_app(tmp_path, text), EASY)
+    assert _groups(tmp_path) == []
+    # An error body that mentions a tool call still logs no groups.
+    await _post(_reply_app(tmp_path, _tool_use(("bash", {"command": "ls"})), status=429), EASY)
+    assert _groups(tmp_path) == []
+
+
+@pytest.mark.asyncio
+async def test_step_groups_unreadable_call_is_irreversible(tmp_path: Path) -> None:
+    reply = b'{"stop_reason": "tool_use", "content": []}'
+    await _post(_reply_app(tmp_path, reply), EASY)
+    assert _groups(tmp_path) == ["irreversible"]
+
+
+@pytest.mark.asyncio
+async def test_step_groups_streamed_frontier_git_push(tmp_path: Path) -> None:
+    chunks: list[dict[str, Any]] = [
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {"index": 0, "id": "c", "function": {"name": "bash", "arguments": ""}}
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {"index": 0, "function": {"arguments": '{"command": "git push"}'}}
+                        ]
+                    }
+                }
+            ]
+        },
+        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+    ]
+    sse = _sse(*chunks)
+    app = _reply_app(tmp_path, sse, "text/event-stream", p_easy=None)
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://relay"
+        ) as client,
+        client.stream("POST", "/v1/chat/completions", json={**TOOL_RUN, "stream": True}) as resp,
+    ):
+        got = [c async for c in resp.aiter_bytes()]
+    assert b"".join(got) == sse
+    assert _groups(tmp_path) == ["irreversible"]
+
+
+@pytest.mark.asyncio
+async def test_step_groups_follow_the_frontier_reply_after_escalation(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, 0.9, escalate_on_stop=True)
+    frontier = _tool_use(("read", {"file_path": "a"}))
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "judge.test" in str(request.url):
+            return httpx.Response(
+                200, json={"answers": {"route": {"probabilities": {"easy": 0.9}}}}
+            )
+        if "local.test" in str(request.url):
+            return httpx.Response(200, json={"content": [{"type": "text", "text": "done"}]})
+        return httpx.Response(200, content=frontier)
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    resp = await _post(app, EASY)
+    assert resp.content == frontier
+    assert _groups(tmp_path) == ["read"]
+
+
+@pytest.mark.asyncio
+async def test_turn_log_never_holds_the_client_key(tmp_path: Path) -> None:
+    await _post(_reply_app(tmp_path, _tool_use(("bash", {"command": "ls"}))), EASY)
+    assert "sk-client" not in (tmp_path / "turns.jsonl").read_text()
+
+
+def _push_chunks() -> list[bytes]:
+    first = {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {"index": 0, "id": "c", "function": {"name": "bash", "arguments": ""}}
+                    ]
+                }
+            }
+        ]
+    }
+    second = {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {"index": 0, "function": {"arguments": '{"command": "git push"}'}}
+                    ]
+                }
+            }
+        ]
+    }
+    return [_sse(first)[: -len(b"data: [DONE]\n\n")], _sse(second)[: -len(b"data: [DONE]\n\n")]]
+
+
+@pytest.mark.asyncio
+async def test_cut_stream_logs_irreversible_and_stream_cut(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, None)
+
+    async def cut() -> Any:
+        for c in _push_chunks():
+            yield c
+        raise httpx.ReadError("boom")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=cut(), headers={"content-type": "text/event-stream"})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await _post_openai(app, {**TOOL_RUN, "stream": True})
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    assert line["status"] == 502
+    assert line["step_groups"] == ["irreversible"]
+    assert line["stream_cut"] is True
+
+
+@pytest.mark.asyncio
+async def test_cut_stream_with_unreadable_call_is_irreversible(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, None)
+
+    async def cut() -> Any:
+        yield _push_chunks()[0]
+        raise httpx.ReadError("boom")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=cut(), headers={"content-type": "text/event-stream"})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await _post_openai(app, {**TOOL_RUN, "stream": True})
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    assert line["step_groups"] == ["irreversible"]
+
+
+@pytest.mark.asyncio
+async def test_cut_stream_before_any_tool_call_has_no_step_groups(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, None)
+    text = {"choices": [{"delta": {"content": "Let me look"}}]}
+
+    async def cut() -> Any:
+        yield _sse(text)[: -len(b"data: [DONE]\n\n")]
+        raise httpx.ReadError("boom")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=cut(), headers={"content-type": "text/event-stream"})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await _post_openai(app, {**TOOL_RUN, "stream": True})
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    assert (line["stream_cut"], line["step_groups"]) == (True, [])
+
+
+@pytest.mark.asyncio
+async def test_normal_stream_has_no_stream_cut(tmp_path: Path) -> None:
+    sse = _sse({"choices": [{"delta": {"content": "hi"}, "finish_reason": "stop"}]})
+    await _post(_reply_app(tmp_path, sse, "text/event-stream"), {**EASY, "stream": True})
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    assert "stream_cut" not in line
+
+
+NULL_NAME = json.dumps(
+    {
+        "content": [{"type": "tool_use", "id": "t", "name": None, "input": {}}],
+        "stop_reason": "tool_use",
+    }
+).encode()
+
+
+@pytest.mark.asyncio
+async def test_malformed_tool_call_does_not_break_the_reply(tmp_path: Path) -> None:
+    resp = await _post(_reply_app(tmp_path, NULL_NAME), EASY)
+    assert resp.status_code == 200
+    assert resp.content == NULL_NAME
+    assert len((tmp_path / "turns.jsonl").read_text().splitlines()) == 1
+    assert _groups(tmp_path) == ["irreversible"]
+
+
+@pytest.mark.asyncio
+async def test_malformed_tool_call_in_a_stream_is_still_logged(tmp_path: Path) -> None:
+    sse = b"data: " + NULL_NAME + b"\n\n"
+    resp = await _post(_reply_app(tmp_path, sse, "text/event-stream"), {**EASY, "stream": True})
+    assert resp.status_code == 200
+    assert resp.content == sse
+    assert len((tmp_path / "turns.jsonl").read_text().splitlines()) == 1
+    assert _groups(tmp_path) == ["irreversible"]
+
+
+@pytest.mark.asyncio
+async def test_triage_error_reply_has_no_verdict(tmp_path: Path) -> None:
+    app, _ = _app(tmp_path, None, route_mode="triage")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"error": "slow down"})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await _post_openai(app, TOOL_RUN)
+    line = json.loads((tmp_path / "turns.jsonl").read_text().splitlines()[-1])
+    assert "triage_verdict" not in line
