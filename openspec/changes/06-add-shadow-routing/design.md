@@ -10,7 +10,7 @@ Change 03 added `step_groups` and keeps the relayed bytes of a stream (`seen`). 
 
 ## Decisions
 
-- **Builds on 03.** This change is cut from `spec/03-log-routing-signals` and merges after it.
+- **Builds on 03.** Uses 03's step groups and stream buffer (`seen`); merges after 03.
 - **One turn-log line per request, written after the shadow.** When a request has a shadow, its
   line is written once both the frontier reply has reached the agent and the shadow has
   finished, by a background task. The agent's reply is never delayed. Alternative: a second
@@ -31,6 +31,10 @@ Change 03 added `step_groups` and keeps the relayed bytes of a stream (`seen`). 
 - **Judge in every mode.** When the shadow share is above 0.0, `decide()` also asks the judge in
   `frontier`, `lite`, `random` and `triage` modes and records `p_easy`, `judge_ms` and
   `judge_error`; the tier and reason are unchanged. A judge error never changes routing.
+
+- **Shadow cost.** The shadow object carries `cost_usd` from the lite reply's usage (the same
+  parsing as `discarded_lite_cost_usd` in 05), apart from the line's own `cost_usd`, so a hosted
+  lite tier's labelling cost is visible without changing what reports count as routing cost.
 
 ## Risks / Trade-offs
 

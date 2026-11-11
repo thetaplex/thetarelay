@@ -92,7 +92,7 @@ logged, so you can compare it with the lite reply. That adds the judge's latency
 mode almost every frontier request is triaged.
 
 Each shadow is one more request to the lite server. A local server gets more load. A hosted lite tier costs money
-for every shadow. The default is 0.0 (off).
+for every shadow; the turn log records it as `shadow.cost_usd`. The default is 0.0 (off).
 
 ## Measured judge accuracy
 

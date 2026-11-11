@@ -1802,7 +1802,21 @@ async def test_shadow_matching_action(tmp_path: Path, monkeypatch: pytest.Monkey
         "target": "src/app.py",
         "args_sha256": _sha({"file_path": "src/app.py"}),
     }
-    assert _lines(tmp_path)[0]["shadow"] == {"frontier": [call], "lite": [call], "match": True}
+    shadow = {"frontier": [call], "lite": [call], "match": True, "cost_usd": None}
+    assert _lines(tmp_path)[0]["shadow"] == shadow
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_shadow_cost_is_logged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, stream: bool
+) -> None:
+    _coin(monkeypatch, 0.0)
+    reply = _lite_reply(provider, stream, ("read", '{"file_path": "src/app.py"}'))
+    app, _ = _shadow_app(tmp_path, lite=_with_cost(provider, stream, reply, 0.004))
+    await _post_as(provider, app, _guard_request(provider, stream))
+    await _drain(app)
+    assert _lines(tmp_path)[0]["shadow"]["cost_usd"] == 0.004
 
 
 async def test_shadow_different_edit_to_the_same_file(
@@ -1875,7 +1889,7 @@ async def test_shadow_unparsable_arguments_fail_closed(
     resp = await _post(app, EASY)
     assert resp.content == SRC_READ
     await _drain(app)
-    assert _lines(tmp_path)[0]["shadow"] == {"error": "parse"}
+    assert _lines(tmp_path)[0]["shadow"] == {"error": "parse", "cost_usd": None}
 
 
 ANTH_READ_SSE = (

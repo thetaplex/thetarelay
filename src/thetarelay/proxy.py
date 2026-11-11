@@ -224,19 +224,21 @@ def _shadow_calls(raw: bytes) -> list[dict[str, Any]]:
     return out
 
 
-def _shadow(frontier_raw: bytes, status: int, lite_raw: bytes) -> dict[str, Any]:
-    """The `shadow` object of a turn-log line: both replies' calls and whether they agree."""
+def _shadow(provider: str, frontier_raw: bytes, status: int, lite_raw: bytes) -> dict[str, Any]:
+    """The `shadow` object of a turn-log line: both replies' calls, whether they agree, and
+    what the shadow cost."""
     if status != 200:
         return {"error": f"http_{status}"}
+    cost = {"cost_usd": _reply_usage(provider, lite_raw)["cost_usd"]}
     try:
         f, lite = _shadow_calls(frontier_raw), _shadow_calls(lite_raw)
         same = len(f) == len(lite) and all(
             (a["name"], a["target"]) == (b["name"], b["target"])
             for a, b in zip(f, lite, strict=False)
         )
-        return {"frontier": f, "lite": lite, "match": same}
+        return {"frontier": f, "lite": lite, "match": same, **cost}
     except Exception:  # a reply we cannot read must not lose the line
-        return {"error": "parse"}
+        return {"error": "parse", **cost}
 
 
 def _text_verdict(text: str) -> bool | None:
@@ -569,7 +571,7 @@ def create_app(config: RouterConfig | None = None) -> FastAPI:
 
         async def record_after_shadow(task: asyncio.Task[tuple[int, bytes]], raw: bytes) -> None:
             try:
-                record["shadow"] = _shadow(raw, *await task)
+                record["shadow"] = _shadow(provider, raw, *await task)
             except asyncio.CancelledError:
                 record["shadow"] = {"error": "shutdown"}
                 recorder.record(record)

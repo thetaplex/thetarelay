@@ -12,10 +12,10 @@ real steps is to run the lite model next to the frontier, without using its answ
 - New setting `THETARELAY_SHADOW_SHARE` (0.0 to 1.0, default 0.0): the share of frontier-tier
   requests that are also sent to the lite tier in the background. The lite reply is never
   returned to the agent.
-- The judge is asked on every request in every route mode, and its answer is logged, so
-  `frontier` mode collects judge decisions too.
-- The turn log records the shadow lite reply's tool calls and whether they match the frontier's:
-  same tool, same target (file path, or shell command).
+- While the share is above 0 and a turn log is set, the judge is asked on every request in
+  every route mode, and its answer is logged, so `frontier` mode collects judge decisions too.
+- The turn log records the shadow lite reply's tool calls, whether they match the frontier's
+  (same tool, same target: file path or shell command), and the shadow's cost.
 
 ## Capabilities
 
