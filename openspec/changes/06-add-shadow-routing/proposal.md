@@ -12,10 +12,10 @@ real steps is to run the lite model next to the frontier, without using its answ
 - New setting `THETARELAY_SHADOW_SHARE` (0.0 to 1.0, default 0.0): the share of frontier-tier
   requests that are also sent to the lite tier in the background. The lite reply is never
   returned to the agent.
-- The judge is asked on every request in every route mode, and its answer is logged, so
-  `frontier` mode collects judge decisions too.
-- The turn log records the shadow lite reply's tool calls and whether they match the frontier's:
-  same tool, same target (file path, or shell command).
+- While the share is above 0 and a turn log is set, the judge is asked on every request in
+  every route mode, and its answer is logged, so `frontier` mode collects judge decisions too.
+- The turn log records the shadow lite reply's tool calls, whether they match the frontier's
+  (same tool, same target: file path or shell command), and the shadow's cost.
 
 ## Capabilities
 
@@ -33,8 +33,8 @@ None. The `shadow` turn log field is specified in `shadow-routing`.
 - Extra load on the lite server; if the lite tier is hosted, extra cost per shadow request.
 - Depends on `01-add-step-classification` and `03-log-routing-signals`.
 
-## Open for review
+## Decided
 
-- "Same target" is a weak match: two edits to the same file can differ. Stronger: compare the
-  edit text after whitespace normalisation. Proposal: log both actions in full and decide the
-  match rule offline, so it can change without changing the proxy.
+- Match rule: `match` compares tool and target only. Both replies' calls are logged with a hash
+  of their arguments (no edit text), so stricter rules can be applied offline. See `design.md`.
+- The shadow result goes on the request's own turn log line, written after the shadow finishes.

@@ -79,6 +79,21 @@ an `anthropic/` frontier model, ThetaRelay adds OpenRouter's top-level marker
 (`"cache_control": {"type": "ephemeral"}`) if the request has no marker. OpenRouter then puts
 the cache boundary at the end of the prompt. The system prompt and the messages do not change.
 
+## Shadow routing
+
+Set `THETARELAY_SHADOW_SHARE` above 0 and `THETARELAY_TURN_LOG` to a file, to learn what the lite tier
+would have done. For that share of the requests that go to the frontier tier (and are not triaged, escalated from the lite tier, or larger than
+`THETARELAY_LITE_MAX_REQUEST_CHARS`), ThetaRelay
+also sends the same request to the lite server, with the lite body and key. The agent never sees the lite
+reply. ThetaRelay logs the tool calls of both replies and whether they agree (`shadow` in the
+[turn log](../reference/http-api.md#turn-log)). The judge is also asked in every route mode, and its answer is
+logged, so you can compare it with the lite reply. That adds the judge's latency (up to
+`THETARELAY_JUDGE_TIMEOUT`) to every request. Shadows come mainly in `frontier` and `judge` modes: in `hybrid`
+mode almost every frontier request is triaged.
+
+Each shadow is one more request to the lite server. A local server gets more load. A hosted lite tier costs money
+for every shadow; the turn log records it as `shadow.cost_usd`. The default is 0.0 (off).
+
 ## Measured judge accuracy
 
 On 59 coding-agent steps written and labelled by hand (30 easy, 29 hard), at a threshold of

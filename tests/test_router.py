@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
+import random
 import sys
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
@@ -74,8 +78,13 @@ def _app(
         judge_url="http://judge.test/v1/systemone",
         frontier_api_key="sk-frontier",
         enable_headroom_middleware=False,
-        turn_log_path=str(tmp_path / "turns.jsonl"),
-        **{"escalate_on_stop": False, "route_mode": "judge", "stay_requests": 6, **overrides},
+        **{
+            "turn_log_path": str(tmp_path / "turns.jsonl"),
+            "escalate_on_stop": False,
+            "route_mode": "judge",
+            "stay_requests": 6,
+            **overrides,
+        },
     )
     app = create_app(cfg)
     calls: list[tuple[str, dict[str, Any], dict[str, str]]] = []
@@ -1561,3 +1570,545 @@ async def test_guard_and_escalate_on_stop_together(tmp_path: Path) -> None:
     app, _ = _guard_app(tmp_path, run, lite_guard="writes", escalate_on_stop=True)
     resp = await _post_openai(app, body)
     assert (resp.headers["x-thetarelay-tier"], resp.content) == ("lite", run)
+
+
+def _lines(tmp_path: Path) -> list[dict[str, Any]]:
+    return [json.loads(x) for x in (tmp_path / "turns.jsonl").read_text().splitlines()]
+
+
+def test_shadow_share_defaults_off_and_is_validated() -> None:
+    assert RouterConfig().shadow_share == 0.0
+    with pytest.raises(ValueError, match="shadow_share"):
+        RouterConfig(shadow_share=1.5)
+
+
+@pytest.mark.asyncio
+async def test_judge_skipped_without_shadow_share(tmp_path: Path) -> None:
+    app, calls = _app(tmp_path, 0.9, route_mode="frontier")
+    await _post(app, EASY)
+    assert not any("judge.test" in c[0] for c in calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("overrides", "body", "tier", "reason"),
+    [
+        ({"route_mode": "frontier"}, EASY, "frontier", "forced_frontier"),
+        ({"route_mode": "lite"}, EASY, "lite", "forced_lite"),
+        ({"route_mode": "random", "random_lite_share": 1.0}, EASY, "lite", "random"),
+        ({"route_mode": "triage"}, EASY, "frontier", "triage"),
+        ({"lite_max_request_chars": 10}, EASY, "frontier", "too_large_for_lite"),
+        (
+            {"stay_requests": 6},
+            {**EASY, **ANTH_FAIL},
+            "frontier",
+            "recent_failure (0 requests ago)",
+        ),
+    ],
+)
+async def test_judge_asked_in_every_mode_with_shadow_share(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    overrides: dict[str, Any],
+    body: dict[str, Any],
+    tier: str,
+    reason: str,
+) -> None:
+    _coin(monkeypatch, 0.99)  # no shadow, so the line is written at once
+    app, calls = _app(tmp_path, 0.2, shadow_share=0.1, **overrides)
+    resp = await _post(app, body)
+    assert (resp.headers["x-thetarelay-tier"], resp.headers["x-thetarelay-reason"]) == (
+        tier,
+        reason,
+    )
+    assert any("judge.test" in c[0] for c in calls)
+    line = _lines(tmp_path)[0]
+    assert line["p_easy"] == pytest.approx(0.2)
+    assert line["judge_ms"] is not None
+
+
+@pytest.mark.asyncio
+async def test_judge_error_in_frontier_mode_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coin(monkeypatch, 0.99)
+    app, _ = _app(tmp_path, None, route_mode="frontier", shadow_share=0.1)
+    resp = await _post(app, EASY)
+    assert resp.headers["x-thetarelay-reason"] == "forced_frontier"
+    line = _lines(tmp_path)[0]
+    assert line["judge_error"]
+    assert line["p_easy"] is None
+
+
+# Shadow requests: a frontier step also sent to the lite tier, logged on the same line.
+
+
+def _coin(monkeypatch: pytest.MonkeyPatch, value: float) -> None:
+    monkeypatch.setattr(random, "random", lambda: value)
+
+
+SRC_READ = _tool_use(("read", {"file_path": "src/app.py"}))
+LITE_PATH = "http://local.test"
+
+
+def _shadow_app(
+    tmp_path: Path,
+    frontier: bytes | Exception | Callable[[], AsyncIterator[bytes]] = SRC_READ,
+    lite: bytes | Exception = SRC_READ,
+    gate: asyncio.Event | None = None,
+    content_type: str = "application/json",
+    lite_status: int = 200,
+    p_easy: float = 0.2,
+    **overrides: Any,
+) -> tuple[Any, list[tuple[str, dict[str, Any], dict[str, str]]]]:
+    app, calls = _app(
+        tmp_path, p_easy, **{"route_mode": "frontier", "shadow_share": 0.5, **overrides}
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        calls.append((url, json.loads(request.content), dict(request.headers)))
+        if "judge.test" in url:
+            probs = {"easy": p_easy, "hard": 1 - p_easy}
+            return httpx.Response(200, json={"answers": {"route": {"probabilities": probs}}})
+        if url.startswith(LITE_PATH):
+            if gate:
+                await gate.wait()
+            if isinstance(lite, Exception):
+                raise lite
+            return httpx.Response(lite_status, content=lite)
+        if isinstance(frontier, Exception):
+            raise frontier
+        content = frontier() if callable(frontier) else frontier
+        return httpx.Response(200, content=content, headers={"content-type": content_type})
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return app, calls
+
+
+async def _drain(app: Any) -> None:
+    while app.state.shadow_tasks:
+        await asyncio.gather(*list(app.state.shadow_tasks), return_exceptions=True)
+
+
+def _lite_calls(calls: list[tuple[str, dict[str, Any], dict[str, str]]]) -> list[Any]:
+    return [c for c in calls if c[0].startswith(LITE_PATH)]
+
+
+def _sha(args: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(args, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+async def test_shadow_slow_lite_server_does_not_delay_the_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coin(monkeypatch, 0.0)
+    gate = asyncio.Event()
+    app, calls = _shadow_app(tmp_path, gate=gate)
+    resp = await asyncio.wait_for(_post(app, EASY), 2.0)  # the lite reply is still held back
+    assert resp.status_code == 200
+    assert resp.content == SRC_READ
+    assert resp.headers["x-thetarelay-tier"] == "frontier"
+    assert not (tmp_path / "turns.jsonl").exists()  # the line waits for the shadow
+    gate.set()
+    await _drain(app)
+    assert len(_lite_calls(calls)) == 1
+    lines = _lines(tmp_path)
+    assert len(lines) == 1
+    assert lines[0]["shadow"]["match"] is True
+
+
+async def test_shadow_timeout_is_recorded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _coin(monkeypatch, 0.0)
+    app, _ = _shadow_app(tmp_path, gate=asyncio.Event(), lite_timeout_seconds=0.05)
+    resp = await _post(app, EASY)
+    assert resp.content == SRC_READ
+    await _drain(app)
+    assert [line["shadow"] for line in _lines(tmp_path)] == [{"error": "timeout"}]
+
+
+@pytest.mark.parametrize(
+    ("lite", "status", "error"),
+    [(httpx.ConnectError("down"), 200, "ConnectError"), (b"oops", 500, "http_500")],
+)
+async def test_shadow_lite_server_down_is_recorded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    lite: bytes | Exception,
+    status: int,
+    error: str,
+) -> None:
+    _coin(monkeypatch, 0.0)
+    app, _ = _shadow_app(tmp_path, lite=lite, lite_status=status)
+    resp = await _post(app, EASY)
+    assert resp.status_code == 200
+    assert resp.content == SRC_READ
+    await _drain(app)
+    lines = _lines(tmp_path)
+    assert len(lines) == 1
+    assert lines[0]["shadow"] == {"error": error}
+    assert lines[0]["tier"] == "frontier"
+
+
+async def test_shadow_follows_lite_rules_and_leaves_frontier_body_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coin(monkeypatch, 0.0)
+    sse = b"event: message_stop\ndata: {}\n\n"
+    app, calls = _shadow_app(
+        tmp_path, frontier=sse, content_type="text/event-stream", lite_api_key="sk-lite"
+    )
+    body = {**EASY, "stream": True, "stream_options": {"include_usage": True}}
+    resp = await _post(app, body)
+    assert resp.content == sse
+    await _drain(app)
+    ((_, lite_body, lite_headers),) = _lite_calls(calls)
+    # Exactly the lite-tier body: still streamed, as the client asked.
+    assert lite_body == {
+        **body,
+        "model": "anthropic/claude-haiku-5.5",
+        "thinking": {"type": "disabled"},
+    }
+    assert lite_headers["authorization"] == "Bearer sk-lite"
+    assert "x-api-key" not in lite_headers
+    ((_, frontier_body, _),) = [c for c in calls if "frontier.test" in c[0]]
+    assert frontier_body == {**body, "model": "anthropic/claude-opus-5.5"}
+
+
+async def test_shadow_openai_never_carries_client_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coin(monkeypatch, 0.0)
+    app, calls = _shadow_app(tmp_path)
+    await _post_openai(app, TOOL_RUN)
+    await _drain(app)
+    ((_, lite_body, lite_headers),) = _lite_calls(calls)
+    assert "authorization" not in lite_headers  # no lite key configured, and not the client's
+    assert lite_body["reasoning_effort"] == "none"
+    assert lite_body["messages"] == TOOL_RUN["messages"]
+    assert "sk-client" not in (tmp_path / "turns.jsonl").read_text()
+
+
+async def test_shadow_matching_action(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _coin(monkeypatch, 0.0)
+    app, _ = _shadow_app(tmp_path)
+    await _post(app, EASY)
+    await _drain(app)
+    call = {
+        "name": "read",
+        "group": "read",
+        "target": "src/app.py",
+        "args_sha256": _sha({"file_path": "src/app.py"}),
+    }
+    shadow = {"frontier": [call], "lite": [call], "match": True, "cost_usd": None}
+    assert _lines(tmp_path)[0]["shadow"] == shadow
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_shadow_cost_is_logged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, stream: bool
+) -> None:
+    _coin(monkeypatch, 0.0)
+    reply = _lite_reply(provider, stream, ("read", '{"file_path": "src/app.py"}'))
+    app, _ = _shadow_app(tmp_path, lite=_with_cost(provider, stream, reply, 0.004))
+    await _post_as(provider, app, _guard_request(provider, stream))
+    await _drain(app)
+    assert _lines(tmp_path)[0]["shadow"]["cost_usd"] == 0.004
+
+
+async def test_shadow_different_edit_to_the_same_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coin(monkeypatch, 0.0)
+    f_args = {"file_path": "src/app.py", "old_string": "a = 1", "new_string": "SECRET_FRONTIER"}
+    l_args = {"file_path": "src/app.py", "old_string": "a = 1", "new_string": "SECRET_LITE"}
+    app, _ = _shadow_app(
+        tmp_path, frontier=_tool_use(("edit", f_args)), lite=_tool_use(("edit", l_args))
+    )
+    await _post(app, EASY)
+    await _drain(app)
+    shadow = _lines(tmp_path)[0]["shadow"]
+    assert shadow["match"] is True
+    assert shadow["frontier"][0]["args_sha256"] == _sha(f_args)
+    assert shadow["lite"][0]["args_sha256"] == _sha(l_args)
+    assert shadow["frontier"][0]["args_sha256"] != shadow["lite"][0]["args_sha256"]
+    text = (tmp_path / "turns.jsonl").read_text()
+    assert "SECRET_" not in text  # no argument text beyond target
+    assert "a = 1" not in text
+
+
+@pytest.mark.parametrize(
+    ("lite", "match"),
+    [
+        (_tool_use(("read", {"file_path": "src/other.py"})), False),
+        (_tool_use(("bash", {"file_path": "src/app.py"})), False),
+        (_tool_use(("read", {"file_path": "src/app.py"}), ("read", {"path": "b"})), False),
+        (json.dumps({"content": [{"type": "text", "text": "done"}]}).encode(), False),
+        (_tool_use(("read", {"path": "src/app.py"})), True),
+    ],
+)
+async def test_shadow_match_needs_same_names_and_targets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lite: bytes, match: bool
+) -> None:
+    _coin(monkeypatch, 0.0)
+    app, _ = _shadow_app(tmp_path, lite=lite)
+    await _post(app, EASY)
+    await _drain(app)
+    assert _lines(tmp_path)[0]["shadow"]["match"] is match
+
+
+async def test_shadow_target_is_the_command_cut_to_200(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coin(monkeypatch, 0.0)
+    cmd = "echo " + "x" * 300
+    reply = _tool_use(("bash", {"command": cmd}), ("todo", {"items": ["a"]}))
+    app, _ = _shadow_app(tmp_path, frontier=reply, lite=reply)
+    await _post(app, EASY)
+    await _drain(app)
+    calls = _lines(tmp_path)[0]["shadow"]["frontier"]
+    assert calls[0]["target"] == cmd[:200]
+    assert calls[1]["target"] is None
+
+
+async def test_shadow_unparsable_arguments_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coin(monkeypatch, 0.0)
+    lite = json.dumps(
+        {
+            "choices": [
+                {"message": {"tool_calls": [{"function": {"name": "x", "arguments": "{oops"}}]}}
+            ]
+        }
+    ).encode()
+    app, _ = _shadow_app(tmp_path, lite=lite)
+    resp = await _post(app, EASY)
+    assert resp.content == SRC_READ
+    await _drain(app)
+    assert _lines(tmp_path)[0]["shadow"] == {"error": "parse", "cost_usd": None}
+
+
+ANTH_READ_SSE = (
+    b"event: content_block_start\ndata: "
+    + json.dumps(
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "tool_use", "id": "t", "name": "read", "input": {}},
+        }
+    ).encode()
+    + b"\n\nevent: content_block_delta\ndata: "
+    + json.dumps(
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "input_json_delta", "partial_json": '{"file_path": "src/app.py"}'},
+        }
+    ).encode()
+    + b"\n\nevent: message_stop\ndata: {}\n\n"
+)
+OAI_READ = {
+    "choices": [
+        {
+            "message": {
+                "content": None,
+                "tool_calls": [
+                    {"id": "c", "function": {"name": "read", "arguments": '{"path": "src/app.py"}'}}
+                ],
+            }
+        }
+    ]
+}
+OAI_READ_SSE = _sse(
+    {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {"index": 0, "id": "c", "function": {"name": "read", "arguments": ""}}
+                    ]
+                }
+            }
+        ]
+    },
+    {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {"index": 0, "function": {"arguments": '{"path": "src/app.py"}'}}
+                    ]
+                }
+            }
+        ]
+    },
+    {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+)
+
+
+@pytest.mark.parametrize(
+    ("provider", "stream", "frontier"),
+    [
+        ("anthropic", False, SRC_READ),
+        ("anthropic", True, ANTH_READ_SSE),
+        ("openai", False, json.dumps(OAI_READ).encode()),
+        ("openai", True, OAI_READ_SSE),
+    ],
+)
+async def test_shadow_one_line_per_request_in_both_formats(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    stream: bool,
+    frontier: bytes,
+) -> None:
+    _coin(monkeypatch, 0.0)
+    ctype = "text/event-stream" if stream else "application/json"
+    # The shadow is streamed when the client streams; its SSE reply is read like the agent's.
+    lite = frontier
+    gate = asyncio.Event()
+    app, calls = _shadow_app(tmp_path, frontier=frontier, lite=lite, gate=gate, content_type=ctype)
+    post = _post if provider == "anthropic" else _post_openai
+    resp = await post(app, {**(EASY if provider == "anthropic" else TOOL_RUN), "stream": stream})
+    assert resp.content == frontier
+    assert not (tmp_path / "turns.jsonl").exists()
+    gate.set()
+    await _drain(app)
+    lines = _lines(tmp_path)
+    assert len(lines) == 1
+    assert lines[0]["shadow"]["match"] is True
+    assert lines[0]["shadow"]["frontier"][0]["target"] == "src/app.py"
+    assert lines[0]["step_groups"] == ["read"]
+    assert _lite_calls(calls)[0][1]["stream"] is stream
+
+
+async def test_shadow_with_cut_stream_and_bad_gateway_still_one_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coin(monkeypatch, 0.0)
+    app, _ = _shadow_app(tmp_path, frontier=httpx.ConnectError("frontier down"))
+    resp = await _post(app, EASY)
+    assert resp.status_code == 502
+    await _drain(app)
+    (line,) = _lines(tmp_path)
+    assert line["status"] == 502
+    assert line["shadow"]["frontier"] == []
+    assert line["shadow"]["match"] is False
+
+    (tmp_path / "turns.jsonl").unlink()
+
+    async def cut() -> AsyncIterator[bytes]:
+        yield _push_chunks()[0]
+        raise httpx.ReadError("boom")
+
+    app, _ = _shadow_app(tmp_path, frontier=cut, content_type="text/event-stream")
+    await _post_openai(app, {**TOOL_RUN, "stream": True})
+    await _drain(app)
+    (line,) = _lines(tmp_path)
+    assert line["stream_cut"] is True
+    assert "shadow" in line
+
+
+async def test_shadow_cancelled_at_shutdown_still_writes_its_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coin(monkeypatch, 0.0)
+    app, _ = _shadow_app(tmp_path, gate=asyncio.Event())
+    mock = app.state.http_client
+    async with app.router.lifespan_context(app):
+        await app.state.http_client.aclose()  # the lifespan's real client, swapped for the mock
+        app.state.http_client = mock
+        resp = await _post(app, EASY)
+        assert resp.status_code == 200
+        assert not (tmp_path / "turns.jsonl").exists()
+    assert [line["shadow"] for line in _lines(tmp_path)] == [{"error": "shutdown"}]
+    assert not app.state.shadow_tasks
+
+
+@pytest.mark.parametrize("coin", [0.5, 0.99])
+async def test_shadow_only_when_the_coin_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, coin: float
+) -> None:
+    _coin(monkeypatch, coin)
+    app, calls = _shadow_app(tmp_path)
+    await _post(app, EASY)
+    assert not _lite_calls(calls)
+    assert "shadow" not in _lines(tmp_path)[0]
+
+
+async def test_shadow_off_by_default_sends_nothing_to_lite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coin(monkeypatch, 0.0)
+    app, calls = _shadow_app(tmp_path, shadow_share=0.0)
+    await _post(app, EASY)
+    assert not _lite_calls(calls)
+    assert "shadow" not in _lines(tmp_path)[0]
+
+
+async def test_shadow_not_sent_for_triaged_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coin(monkeypatch, 0.0)
+    app, calls = _shadow_app(tmp_path, route_mode="triage")
+    await _post(app, EASY)
+    assert not _lite_calls(calls)
+    line = _lines(tmp_path)[0]
+    assert line["triage_verdict"] == "did_step"
+    assert "shadow" not in line
+
+
+@pytest.mark.parametrize("lite", [httpx.ConnectError("down"), b'{"content": []}'])
+async def test_shadow_not_sent_for_escalated_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lite: bytes | Exception
+) -> None:
+    _coin(monkeypatch, 0.0)
+    app, calls = _shadow_app(
+        tmp_path, lite=lite, p_easy=0.9, route_mode="judge", escalate_on_stop=True
+    )
+    resp = await _post(app, EASY)
+    assert resp.headers["x-thetarelay-tier"] == "frontier"
+    assert "lite_" in resp.headers["x-thetarelay-reason"]
+    assert len(_lite_calls(calls)) == 1  # the lite try itself, no second shadow request
+    assert "shadow" not in _lines(tmp_path)[0]
+
+
+async def test_shadow_skipped_without_a_turn_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coin(monkeypatch, 0.0)
+    app, calls = _shadow_app(tmp_path, shadow_share=1.0, turn_log_path="")
+    resp = await _post(app, EASY)
+    assert resp.content == SRC_READ
+    await _drain(app)
+    assert not _lite_calls(calls)  # a shadow nobody logs would only cost money
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"route_mode": "frontier"}, {"route_mode": "judge"}],
+)
+async def test_shadow_skipped_for_oversized_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overrides: dict[str, Any]
+) -> None:
+    _coin(monkeypatch, 0.0)
+    app, calls = _shadow_app(tmp_path, lite_max_request_chars=10, **overrides)
+    resp = await _post(app, EASY)
+    assert resp.headers["x-thetarelay-tier"] == "frontier"
+    await _drain(app)
+    assert not _lite_calls(calls)  # the lite tier cannot take it
+    assert "shadow" not in _lines(tmp_path)[0]
+
+
+async def test_judge_skipped_in_frontier_mode_without_a_turn_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coin(monkeypatch, 0.0)
+    app, calls = _shadow_app(tmp_path, turn_log_path="")
+    await _post(app, EASY)
+    await _drain(app)
+    assert not any("judge.test" in c[0] for c in calls)  # nobody would see its answer
