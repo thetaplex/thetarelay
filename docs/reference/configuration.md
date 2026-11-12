@@ -23,9 +23,9 @@ The lite tier takes the easy requests. It can be a local server (Ollama) or a ho
 | `THETARELAY_LITE_MODEL` | `anthropic/claude-haiku-5.5` | Model for easy requests. |
 | `THETARELAY_LITE_API_KEY` | Empty | Key sent as `Authorization: Bearer` to the lite tier. Empty: ThetaRelay sends no key. It never sends the key of the agent to the lite tier. |
 | `THETARELAY_LITE_DISABLE_THINKING` | `true` | Sends `thinking: {"type": "disabled"}` (Anthropic) or `reasoning_effort: "none"` (OpenAI) to the lite tier. |
-| `THETARELAY_LITE_MAX_REQUEST_CHARS` | `100000` | Requests larger than this number of characters go to the frontier tier. |
+| `THETARELAY_LITE_MAX_REQUEST_CHARS` | `400000` | Requests larger than this number of characters go to the frontier tier. The default keeps Haiku 5.5 under about 100k prompt tokens, above which its price is higher. For a local lite model, use about 4 times its context length in tokens. |
 | `THETARELAY_LITE_TIMEOUT` | `30.0` | If the lite tier sends nothing for this number of seconds, the request goes to the frontier tier. |
-| `THETARELAY_ESCALATE_ON_STOP` | `true` | If a lite response has no tool call (so it would end the agent's turn) and the tests did not just pass, discard it and send the request to the frontier tier. |
+| `THETARELAY_ESCALATE_ON_STOP` | `false` | `true`: if a lite response has no tool call (so it would end the agent's turn), discard it and send the request to the frontier tier. |
 
 ## Frontier tier
 

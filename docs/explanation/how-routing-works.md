@@ -33,10 +33,10 @@ the tier.
 5. **Errors.** If the judge does not answer, the request goes to the frontier tier. If the lite
    server does not answer or returns a 5xx status, ThetaRelay sends the same request to the
    frontier tier.
-6. **Stopping.** If `THETARELAY_ESCALATE_ON_STOP` is `true` (the default) and the lite response
-   contains no tool call (so it would end the agent's turn), ThetaRelay discards it and sends the
-   request to the frontier tier. This holds after a passing test run too: the frontier model
-   decides when the work is done.
+6. **Stopping.** By default, a lite response without a tool call goes to the agent and ends its
+   turn. If `THETARELAY_ESCALATE_ON_STOP` is `true`, ThetaRelay discards such a response and
+   sends the request to the frontier tier, so that the frontier model decides when the work is
+   done. Use it with a lite model that often stops before the task is done.
 7. **Lite guard.** If `THETARELAY_LITE_GUARD` is `irreversible` or `writes` (default `off`),
    ThetaRelay checks each lite reply before the agent sees it. It discards the reply and sends
    the request to the frontier tier if a tool call is malformed (unreadable, not an offered
@@ -74,10 +74,11 @@ matches the cached prefix, if the cache has not expired.
 
 Anthropic models cache only when the request marks where the cache ends (`cache_control`).
 Agents add this marker only when they know that the model is an Anthropic model. Through
-ThetaRelay they do not know, because ThetaRelay picks the model. So for OpenAI-format requests to
-an `anthropic/` frontier model, ThetaRelay adds OpenRouter's top-level marker
-(`"cache_control": {"type": "ephemeral"}`) if the request has no marker. OpenRouter then puts
-the cache boundary at the end of the prompt. The system prompt and the messages do not change.
+ThetaRelay they do not know, because ThetaRelay picks the model. So if a request has no marker,
+ThetaRelay adds a top-level marker (`"cache_control": {"type": "ephemeral"}`) on both tiers and
+for every model. The provider then puts the cache boundary at the end of the prompt. The system
+prompt and the messages do not change. OpenAI models and Ollama accept the marker; Amazon
+Bedrock's own API rejects it, so do not point a tier at `bedrock-runtime` directly.
 
 ## Shadow routing
 

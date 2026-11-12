@@ -53,8 +53,9 @@ class RouterConfig:
     lite_api_key: str = ""
     lite_disable_thinking: bool = True
     # Requests larger than this (characters of system + messages + tools) go to the frontier
-    # tier, because the lite model cannot read them. About 4 characters per token.
-    lite_max_request_chars: int = 100_000
+    # tier, because the lite model cannot read them. About 4 characters per token: the default
+    # keeps Haiku 5.5 under 100k prompt tokens, above which OpenRouter charges more for it.
+    lite_max_request_chars: int = 400_000
     # Seconds the lite server may stay silent (before the first byte, or between chunks)
     # before the request falls back to the frontier tier. A hung lite model costs this much.
     lite_timeout_seconds: float = 30.0
@@ -89,10 +90,9 @@ class RouterConfig:
     # Share of frontier requests also sent to the lite tier as a shadow; above 0 the judge is
     # asked in every mode.
     shadow_share: float = 0.0
-    # A lite reply without a tool call ends the agent's turn. Such replies are discarded and
-    # the request goes to the frontier tier: the lite model takes tool steps, the frontier
-    # model decides when the task is done. Lite responses are buffered to check this.
-    escalate_on_stop: bool = True
+    # On: a lite reply without a tool call (it would end the agent's turn) is discarded and
+    # the request goes to the frontier tier. Lite responses are buffered to check this.
+    escalate_on_stop: bool = False
     # `irreversible`: discard lite replies with an irreversible or malformed tool call and ask
     # the frontier tier instead. `writes`: also discard file-editing steps.
     lite_guard: str = "off"

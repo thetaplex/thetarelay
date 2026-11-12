@@ -17,10 +17,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Evaluation harnesses (`scripts/routing_eval`, `scripts/app_eval`): matched random arms for `judge`, `triage` and `hybrid`, ablation arms, three app specs, and reports with confidence intervals and paired differences. See [Tested models](docs/reference/tested-models.md#release-run).
 - With an `openai/` frontier model and no `THETARELAY_ROUTE_MODE`, the default route mode is now `judge` instead of `hybrid`, because OpenAI models do not hand steps to the lite tier. Set `THETARELAY_ROUTE_MODE=hybrid` to keep the old behaviour. The start-up output shows the route mode.
+- `THETARELAY_LITE_MAX_REQUEST_CHARS` is now `400000` by default instead of `100000`, so longer conversations can still go to Haiku 5.5. With a local lite model, set it to about 4 times the model's context length in tokens.
+- `THETARELAY_ESCALATE_ON_STOP` is now `false` by default: a lite reply that ends the agent's turn goes to the agent instead of being asked again on the frontier model. Set it to `true` to keep the old behaviour.
 
 ### Fixed
 
 - Reading a file that mentions errors no longer counts as a failed step, so the conversation can stay on the lite model.
+- Lite requests now get the top-level `cache_control` marker too, so a hosted Anthropic lite model such as Haiku 5.5 caches the conversation. The marker is added for every model and both tiers whenever the client set none.
+- Evaluation harnesses run the proxy with the Headroom middleware, as the proxy does by default.
 - Pi commands that exit non-zero (`Command exited with code N`) are now caught as failed steps.
 
 ## [0.1.0] - 2026-11-06

@@ -13,7 +13,7 @@ ThetaRelay forwards the request body without change, except:
 
 - `model` is set to the model of the tier.
 - For the lite tier, thinking is turned off (see `THETARELAY_LITE_DISABLE_THINKING`).
-- For OpenAI-format requests to an `anthropic/` frontier model without a `cache_control` marker, `"cache_control": {"type": "ephemeral"}` is added.
+- For requests without a `cache_control` marker, on either tier, `"cache_control": {"type": "ephemeral"}` is added at the top level (not for triage requests, which mark the last real message instead).
 
 ## Response headers
 

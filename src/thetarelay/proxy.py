@@ -75,6 +75,18 @@ def _with_triage_note(cfg: RouterConfig, body: dict[str, Any], provider: str) ->
     return msgs
 
 
+def _mark_cache(body: dict[str, Any], out: dict[str, Any]) -> None:
+    """Add a top-level cache marker if the client set none.
+
+    Anthropic models cache only with a `cache_control` marker, and the client cannot add one:
+    it does not know which model the proxy picks. The top-level marker puts the breakpoint at
+    the end of the prompt and leaves messages and system prompt untouched. OpenAI models and
+    Ollama accept it too. Client markers win: adding one could exceed Anthropic's 4 breakpoints.
+    """
+    if b"cache_control" not in json.dumps(body).encode():
+        out["cache_control"] = {"type": "ephemeral"}
+
+
 def _outbound(
     cfg: RouterConfig,
     body: dict[str, Any],
@@ -102,19 +114,13 @@ def _outbound(
         hdrs = {k: v for k, v in hdrs.items() if k.lower() not in _CREDENTIAL_HEADERS}
         if cfg.lite_api_key:
             hdrs["authorization"] = f"Bearer {cfg.lite_api_key}"
+        _mark_cache(body, out)
         return cfg.lite_base_url + _PATHS[provider], out, hdrs
     out["model"] = cfg.frontier_model
     if triage:
         out["messages"] = _with_triage_note(cfg, body, provider)
-    elif (
-        provider == "openai"
-        and cfg.frontier_model.startswith("anthropic/")
-        and b"cache_control" not in json.dumps(body).encode()
-    ):
-        # Anthropic models cache only with a cache_control marker. The client cannot add one:
-        # it does not know which model the proxy picks. OpenRouter's top-level marker moves the
-        # breakpoint to the end of the prompt and leaves messages and system prompt untouched.
-        out["cache_control"] = {"type": "ephemeral"}
+    else:
+        _mark_cache(body, out)
     if cfg.frontier_api_key:
         hdrs = {k: v for k, v in hdrs.items() if k.lower() not in _CREDENTIAL_HEADERS}
         hdrs["authorization"] = f"Bearer {cfg.frontier_api_key}"
