@@ -132,7 +132,7 @@ OpenRouter cost.
 
 | Problem | Cause and fix |
 |---|---|
-| Most requests show `too_large_for_lite` | The request is longer than 100,000 characters. Skills, RTK and OpenSpec make the system prompt of Pi longer. Remove skills that you do not use, or see `THETARELAY_LITE_MAX_REQUEST_CHARS` in [Configuration](../reference/configuration.md). |
+| Most requests show `too_large_for_lite` | The request is longer than 400,000 characters. Skills, RTK and OpenSpec make the system prompt of Pi longer. Remove skills that you do not use, or see `THETARELAY_LITE_MAX_REQUEST_CHARS` in [Configuration](../reference/configuration.md). |
 | Requests show `judge_error` | Ollama does not run, or the `tev1` model is not downloaded. Do step 1 again. |
 | The proxy log shows `headroom-ai not installed` | Install again with the `[headroom]` extra, as in step 2. |
 | `cached_tokens` in the turn log stays near 0 for frontier requests | Headroom can change earlier messages, and then the frontier prompt cache does not match. Start the proxy with `--no-headroom-middleware` and compare. |

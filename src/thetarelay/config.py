@@ -53,8 +53,9 @@ class RouterConfig:
     lite_api_key: str = ""
     lite_disable_thinking: bool = True
     # Requests larger than this (characters of system + messages + tools) go to the frontier
-    # tier, because the lite model cannot read them. About 4 characters per token.
-    lite_max_request_chars: int = 100_000
+    # tier, because the lite model cannot read them. About 4 characters per token: the default
+    # keeps Haiku 5.5 under 100k prompt tokens, above which OpenRouter charges more for it.
+    lite_max_request_chars: int = 400_000
     # Seconds the lite server may stay silent (before the first byte, or between chunks)
     # before the request falls back to the frontier tier. A hung lite model costs this much.
     lite_timeout_seconds: float = 30.0

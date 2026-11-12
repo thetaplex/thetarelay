@@ -657,6 +657,7 @@ def test_defaults_are_the_tested_setup() -> None:
     assert cfg.lite_base_url == "https://openrouter.ai/api"
     assert (cfg.route_mode, cfg.easy_threshold, cfg.stay_requests) == ("hybrid", 0.7, 0)
     assert cfg.escalate_on_stop is False
+    assert cfg.lite_max_request_chars == 400_000
 
 
 def test_hosted_lite_without_a_key_warns(caplog: pytest.LogCaptureFixture) -> None:
