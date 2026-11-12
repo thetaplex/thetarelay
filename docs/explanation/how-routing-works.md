@@ -17,10 +17,12 @@ For each request, ThetaRelay applies these rules in sequence. The first rule tha
 the tier.
 
 1. **Size.** If the request is larger than `THETARELAY_LITE_MAX_REQUEST_CHARS`, it goes to
-   the frontier tier. The lite model cannot read it.
+   the frontier tier. The default, 400,000 characters, keeps Haiku 5.5 below the prompt size
+   where its price goes up; a local lite model has a smaller context.
 2. **Recent failure.** If a tool result in the last `THETARELAY_STAY_REQUESTS` agent requests
-   shows a failure (for example `FAILED`, `Traceback`, `error:` or a non-zero exit code), the
-   request goes to the frontier tier. A failure usually means debugging, which is hard.
+   is a [failure](#failed-steps), the request goes to the frontier tier. A failure usually
+   means debugging, which is hard. The default is 0, so this rule is off and the judge decides;
+   the judge still sees failed steps in its summary.
 3. **Judge.** ThetaRelay asks the judge model one question: can a small, fast model do the next
    step? If the judge gives a probability of "easy" above `THETARELAY_EASY_THRESHOLD`, the
    request goes to the lite tier.
@@ -48,6 +50,42 @@ the tier.
 A wrong decision has two different costs. An easy step sent to the frontier tier costs money
 only. A hard step sent to the lite tier can cost quality. For this reason every uncertain case
 goes to the frontier tier.
+
+## Step groups
+
+ThetaRelay puts each tool call of the agent in one of four groups, from what the call does:
+
+| Group | Examples |
+|---|---|
+| `read` | Reading or searching files, `ls`, `git status`, `git diff` |
+| `run` | Running tests or code: `pytest`, `uv run`, `npm test`, `cargo build` |
+| `write` | Editing files, `mv`, `rm`, `git commit`, `uv add`, `npm install` |
+| `irreversible` | Anything else, for example `git push`, `curl` or `make deploy` |
+
+For a shell command, ThetaRelay reads every part of the command (after `&&`, `;`, `|` and in
+`$(...)`), and the most severe part sets the group. `read`, `run` and `write` are lists of known
+tools and programs; a tool or program that is not on a list is `irreversible`. So a missed case
+gets the most care, not the least.
+
+The groups decide two things: which lite replies the [lite guard](#the-decision) discards, and
+how a tool result is checked for failure. The turn log records the groups of each reply
+(`step_groups`).
+
+## Failed steps
+
+A failed tool result counts toward rule 2 and toward `failed_results` in the judge's summary.
+ThetaRelay checks the result of a tool call in this order, and the first signal that is present
+decides:
+
+1. The error flag that the agent sets on the tool result.
+2. The last exit status line, such as `Command exited with code 2` (Pi) or `exit code 1`. Code 0
+   means success.
+3. The last test runner summary (pytest, unittest, Jest, cargo), such as `3 passed, 1 failed in
+   0.4s`.
+4. Words such as `FAILED`, `Traceback` or `error:`. This check is not done for `read` steps,
+   because their text is file content: reading a file that mentions errors is not a failure.
+
+A search (`grep`, `rg`) that ends with exit code 1 found no match, which is not a failure.
 
 ## What the judge reads
 
