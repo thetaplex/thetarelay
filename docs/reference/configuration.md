@@ -25,7 +25,7 @@ The lite tier takes the easy requests. It can be a local server (Ollama) or a ho
 | `THETARELAY_LITE_DISABLE_THINKING` | `true` | Sends `thinking: {"type": "disabled"}` (Anthropic) or `reasoning_effort: "none"` (OpenAI) to the lite tier. |
 | `THETARELAY_LITE_MAX_REQUEST_CHARS` | `100000` | Requests larger than this number of characters go to the frontier tier. |
 | `THETARELAY_LITE_TIMEOUT` | `30.0` | If the lite tier sends nothing for this number of seconds, the request goes to the frontier tier. |
-| `THETARELAY_ESCALATE_ON_STOP` | `true` | If a lite response has no tool call (so it would end the agent's turn) and the tests did not just pass, discard it and send the request to the frontier tier. |
+| `THETARELAY_ESCALATE_ON_STOP` | `false` | `true`: if a lite response has no tool call (so it would end the agent's turn), discard it and send the request to the frontier tier. |
 
 ## Frontier tier
 

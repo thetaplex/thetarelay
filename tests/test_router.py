@@ -116,6 +116,7 @@ async def _post(app: Any, body: dict[str, Any]) -> httpx.Response:
 
 
 EASY = {"model": "claude-x", "max_tokens": 10, "messages": [{"role": "user", "content": "ls"}]}
+MARK = {"type": "ephemeral"}
 
 
 @pytest.mark.asyncio
@@ -143,7 +144,8 @@ async def test_hard_request_goes_to_frontier_with_its_key(tmp_path: Path) -> Non
     assert headers["authorization"] == "Bearer sk-frontier"
     assert "x-api-key" not in headers
     assert {k: v for k, v in body.items() if k != "model"} == {
-        k: v for k, v in EASY.items() if k != "model"
+        **{k: v for k, v in EASY.items() if k != "model"},
+        "cache_control": MARK,
     }  # prefix unchanged, so the provider prompt cache keeps working
 
 
@@ -396,38 +398,40 @@ async def test_hosted_lite_model_gets_its_own_key_not_the_clients(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_openai_requests_to_anthropic_frontier_get_a_cache_marker(tmp_path: Path) -> None:
+async def test_requests_without_a_marker_get_one_on_both_tiers(tmp_path: Path) -> None:
     oai = {"model": "x", "messages": [{"role": "user", "content": "explain"}]}
 
-    async def post_oai(app: Any, body: dict[str, Any]) -> None:
+    async def post_oai(app: Any, body: dict[str, Any]) -> dict[str, Any]:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://relay"
         ) as client:
             await client.post("/v1/chat/completions", json=body)
+        return calls[-1][1]
 
-    app, calls = _app(tmp_path, 0.1, frontier_model="anthropic/claude-opus-5.5")
-    await post_oai(app, oai)
-    body = calls[-1][1]
-    assert body["cache_control"] == {"type": "ephemeral"}
-    assert body["messages"] == oai["messages"]  # the prompt itself is unchanged
+    # Every model and tier gets the top-level marker; the prompt itself is unchanged.
+    for p_easy, frontier in [
+        (0.1, "anthropic/claude-opus-5.5"),
+        (0.1, "openai/gpt-6.1-terra"),
+        (0.9, "anthropic/claude-opus-5.5"),  # lite tier
+    ]:
+        app, calls = _app(tmp_path, p_easy, frontier_model=frontier)
+        body = await post_oai(app, oai)
+        assert body["cache_control"] == MARK
+        assert body["messages"] == oai["messages"]
 
-    # The client's own markers win; non-Anthropic models need none.
+    # The client's own markers win: a second one could exceed Anthropic's 4 breakpoints.
     marked = {
         **oai,
         "messages": [
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": "explain", "cache_control": {"type": "ephemeral"}}
-                ],
+                "content": [{"type": "text", "text": "explain", "cache_control": MARK}],
             }
         ],
     }
-    await post_oai(app, marked)
-    assert "cache_control" not in calls[-1][1]
-    app, calls = _app(tmp_path, 0.1, frontier_model="openai/gpt-6.1-terra")
-    await post_oai(app, oai)
-    assert "cache_control" not in calls[-1][1]
+    for p_easy in (0.1, 0.9):
+        app, calls = _app(tmp_path, p_easy)
+        assert "cache_control" not in await post_oai(app, marked)
 
 
 @pytest.mark.asyncio
@@ -643,7 +647,8 @@ async def test_hybrid_confident_judge_goes_lite_else_frontier_triages(tmp_path: 
 
 
 def test_defaults_are_the_tested_setup() -> None:
-    # The only setup measured to cut cost: Opus 5.5 + Haiku 5.5, hybrid, threshold 0.7, stay 0.
+    # The only setup measured to cut cost: Opus 5.5 + Haiku 5.5, hybrid, threshold 0.7, stay 0,
+    # escalate-on-stop off.
     cfg = RouterConfig()
     assert (cfg.frontier_model, cfg.lite_model) == (
         "anthropic/claude-opus-5.5",
@@ -651,6 +656,7 @@ def test_defaults_are_the_tested_setup() -> None:
     )
     assert cfg.lite_base_url == "https://openrouter.ai/api"
     assert (cfg.route_mode, cfg.easy_threshold, cfg.stay_requests) == ("hybrid", 0.7, 0)
+    assert cfg.escalate_on_stop is False
 
 
 def test_hosted_lite_without_a_key_warns(caplog: pytest.LogCaptureFixture) -> None:
@@ -1488,7 +1494,7 @@ async def test_guard_discards_risky_or_malformed_lite_replies(
     assert resp.content == FRONTIER  # no part of the lite reply reaches the agent
     frontier_body = sent[-1][1]
     assert "frontier.test" in sent[-1][0]
-    assert {**frontier_body, "model": body["model"]} == body  # nothing of the lite reply
+    assert {**frontier_body, "model": body["model"]} == {**body, "cache_control": MARK}
     assert line["reason"] == f"judge; {reason}"
     assert line["guarded_step_groups"] == groups
     assert line["lite_output_chars"] == len(lite)
@@ -1770,11 +1776,12 @@ async def test_shadow_follows_lite_rules_and_leaves_frontier_body_alone(
         **body,
         "model": "anthropic/claude-haiku-5.5",
         "thinking": {"type": "disabled"},
+        "cache_control": MARK,
     }
     assert lite_headers["authorization"] == "Bearer sk-lite"
     assert "x-api-key" not in lite_headers
     ((_, frontier_body, _),) = [c for c in calls if "frontier.test" in c[0]]
-    assert frontier_body == {**body, "model": "anthropic/claude-opus-5.5"}
+    assert frontier_body == {**body, "model": "anthropic/claude-opus-5.5", "cache_control": MARK}
 
 
 async def test_shadow_openai_never_carries_client_credentials(

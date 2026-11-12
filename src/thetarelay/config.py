@@ -89,10 +89,9 @@ class RouterConfig:
     # Share of frontier requests also sent to the lite tier as a shadow; above 0 the judge is
     # asked in every mode.
     shadow_share: float = 0.0
-    # A lite reply without a tool call ends the agent's turn. Such replies are discarded and
-    # the request goes to the frontier tier: the lite model takes tool steps, the frontier
-    # model decides when the task is done. Lite responses are buffered to check this.
-    escalate_on_stop: bool = True
+    # On: a lite reply without a tool call (it would end the agent's turn) is discarded and
+    # the request goes to the frontier tier. Lite responses are buffered to check this.
+    escalate_on_stop: bool = False
     # `irreversible`: discard lite replies with an irreversible or malformed tool call and ask
     # the frontier tier instead. `writes`: also discard file-editing steps.
     lite_guard: str = "off"

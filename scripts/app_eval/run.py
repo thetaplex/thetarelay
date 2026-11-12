@@ -153,7 +153,7 @@ def run_claude(work: Path, out: Path) -> dict[str, Any]:
 def start_proxy(arm_env: dict[str, str], turn_log: Path) -> subprocess.Popen[bytes]:
     env = {**os.environ, **PI_ENV, **arm_env, "THETARELAY_TURN_LOG": str(turn_log)}
     proc = subprocess.Popen(
-        ["uv", "run", "thetarelay", "proxy", "--port", str(PORT)],
+        ["uv", "run", "--extra", "headroom", "thetarelay", "proxy", "--port", str(PORT)],
         cwd=REPO,
         env=env,
         stdout=subprocess.DEVNULL,

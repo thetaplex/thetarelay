@@ -73,10 +73,9 @@ def start_proxy(env: dict[str, str], turn_log: Path) -> subprocess.Popen[bytes]:
         **os.environ,
         **env,
         "THETARELAY_TURN_LOG": str(turn_log),
-        "THETARELAY_HEADROOM_MIDDLEWARE": "false",
     }
     proc = subprocess.Popen(
-        ["uv", "run", "thetarelay", "proxy", "--port", str(PORT)],
+        ["uv", "run", "--extra", "headroom", "thetarelay", "proxy", "--port", str(PORT)],
         env=full,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
